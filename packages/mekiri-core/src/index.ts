@@ -12,3 +12,4 @@ export type {
 } from "./types.js";
 export { validateFruit } from "./fruitSchema.js";
 export type { ValidateFruitArgs, ValidateFruitResult } from "./fruitSchema.js";
+export { findLastCompactBoundaryIndex } from "./compactZone.js";
