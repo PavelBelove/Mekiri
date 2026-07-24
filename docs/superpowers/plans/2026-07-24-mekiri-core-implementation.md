@@ -1588,6 +1588,12 @@ git commit -m "feat(mekiri-core): add tz.md §12.2 metrics formulas"
 - Consumes: every symbol exported by `packages/mekiri-core/src/index.ts` from Tasks 1–8.
 - Produces: nothing new — this task proves the whole package composes correctly end-to-end at the library level (no live API, no ACP, no host loop — that's the follow-up `mekiri-host` plan).
 
+**Important — two facts about the real `forkSession` discovered empirically during Task 7, confirmed against the compiled `@anthropic-ai/claude-agent-sdk` source (not present in the SDK's `.d.ts` and not anticipated when this task was first drafted):**
+1. `forkSession` validates `sessionId` and `upToMessageId` against a strict UUID regex (`/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i`) and throws `Invalid sessionId: ...` / `Invalid upToMessageId: ...` otherwise — human-readable placeholder ids like `"integration-parent"` are rejected. `test/helpers/buildTranscript.ts`'s generated ids (`"user-1"`, `"asst-1"`, etc.) are not UUID-shaped either.
+2. Every forked transcript gets one extra trailing `{"type":"custom-title", ...}` line appended beyond the copied/sliced message lines — not documented in the `.d.ts`.
+
+Task 7's `test/branch.test.ts` established the pattern for handling both, confined entirely to test code (never touching `src/branch.ts` or the shared `test/helpers/buildTranscript.ts`): build transcript lines with the normal `userLine`/`assistantLine` helpers (to get a correct parent/child chain), then overwrite each line's `uuid`/`parentUuid` fields in place with literal UUID-shaped strings before writing the session file; and filter out `type === "custom-title"` lines before asserting on forked content, while separately asserting that exactly one such line is present (so the test still fails loudly if that assumption ever changes). Follow the same pattern here.
+
 - [ ] **Step 1: Write the composed integration test**
 
 Create `packages/mekiri-core/test/integration.test.ts`:
@@ -1604,6 +1610,15 @@ import { readAuditLog } from "../src/auditLog.js";
 import { distillationRatio } from "../src/metrics.js";
 import { resetUuidCounter, userLine, assistantLine } from "./helpers/buildTranscript.js";
 import { writeSessionFile, readSessionFile } from "./helpers/sessionFile.js";
+
+// forkSession requires real UUID-format sessionId/upToMessageId (verified
+// during Task 7 against the SDK's compiled source) — buildTranscript.ts's
+// generated ids aren't UUID-shaped, so overwrite them with literals here,
+// the same way Task 7's branch.test.ts does.
+const PARENT_SESSION_ID = "22222222-2222-4222-8222-222222222222";
+const U1_UUID = "33333333-3333-4333-8333-333333333333";
+const A1_UUID = "44444444-4444-4444-8444-444444444444";
+const A2_UUID = "55555555-5555-4555-8555-555555555555";
 
 describe("mekiri-core end-to-end: read dirty logs, then prune(portal)", () => {
   let configDir: string;
@@ -1635,8 +1650,13 @@ describe("mekiri-core end-to-end: read dirty logs, then prune(portal)", () => {
     const u1 = userLine(null, "why is CI flaky?");
     const a1 = assistantLine(u1.uuid!, "Reading the 7000 lines of CI logs to find the root cause of the flake.");
     const a2 = assistantLine(a1.uuid!, "line 6234: retry loop races with the cleanup handler.");
+    u1.uuid = U1_UUID;
+    a1.uuid = A1_UUID;
+    a1.parentUuid = U1_UUID;
+    a2.uuid = A2_UUID;
+    a2.parentUuid = A1_UUID;
     const lines = [u1, a1, a2];
-    await writeSessionFile(configDir, projectDir, "integration-parent", lines);
+    await writeSessionFile(configDir, projectDir, PARENT_SESSION_ID, lines);
 
     const boundary = findBoundary(lines, "Reading the 7000 lines of CI logs");
     expect(boundary.status).toBe("ok");
@@ -1658,7 +1678,7 @@ describe("mekiri-core end-to-end: read dirty logs, then prune(portal)", () => {
 
     const { newSessionId } = await createBranch({
       branchType: "prune",
-      sessionId: "integration-parent",
+      sessionId: PARENT_SESSION_ID,
       dir: projectDir,
       upToMessageId: boundary.uuid,
       noteType: "portal",
@@ -1667,8 +1687,10 @@ describe("mekiri-core end-to-end: read dirty logs, then prune(portal)", () => {
       auditProjectDir: auditDir,
     });
 
-    const forkedLines = await readSessionFile(configDir, projectDir, newSessionId);
-    expect(forkedLines).toHaveLength(2); // u1, a1 only — a2's garbage did not survive
+    const forkedAllLines = await readSessionFile(configDir, projectDir, newSessionId);
+    const forkedContentLines = forkedAllLines.filter((line) => line.type !== "custom-title");
+    expect(forkedContentLines).toHaveLength(2); // u1, a1 only — a2's garbage did not survive
+    expect(forkedAllLines.filter((line) => line.type === "custom-title")).toHaveLength(1);
 
     const log = await readAuditLog(auditDir);
     expect(log).toHaveLength(1);
