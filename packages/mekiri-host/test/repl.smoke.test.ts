@@ -56,4 +56,59 @@ describe("mekiri-host live smoke test", () => {
 
     expect(secondSessionId).toBe(firstSessionId);
   }, 60_000);
+
+  it("mid-turn: calling q.return() after the first assistant message, then resuming, picks up the same session cleanly", async () => {
+    const first = createInputQueue();
+    first.push("Count from 1 to 10, one number per line.");
+    first.close();
+
+    let sessionId: string | undefined;
+    let sawAssistantMessage = false;
+
+    const q1 = query({ prompt: first.iterable, options: { cwd: process.cwd() } });
+    for await (const message of q1) {
+      if (message.type === "system" && message.subtype === "init") {
+        sessionId = message.session_id;
+      }
+
+      if (message.type === "assistant") {
+        sawAssistantMessage = true;
+      }
+
+      // Mirrors repl.ts's actual pendingSwitch path: interrupt mid-turn as
+      // soon as we've seen a real assistant message, rather than letting the
+      // generator exhaust naturally.
+      if (sawAssistantMessage) {
+        await q1.return(undefined);
+        break;
+      }
+    }
+
+    expect(sessionId).toBeTruthy();
+    expect(sawAssistantMessage).toBe(true);
+
+    const second = createInputQueue();
+    second.push("Reply with exactly one word: ok");
+    second.close();
+
+    let secondSessionId: string | undefined;
+    let sawAssistantText = false;
+
+    const q2 = query({ prompt: second.iterable, options: { resume: sessionId, cwd: process.cwd() } });
+    for await (const message of q2) {
+      if (message.type === "system" && message.subtype === "init") {
+        secondSessionId = message.session_id;
+      }
+      if (message.type === "assistant") {
+        for (const block of message.message.content) {
+          if (block.type === "text" && block.text.trim().length > 0) {
+            sawAssistantText = true;
+          }
+        }
+      }
+    }
+
+    expect(secondSessionId).toBe(sessionId);
+    expect(sawAssistantText).toBe(true);
+  }, 60_000);
 });

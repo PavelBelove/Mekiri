@@ -31,49 +31,51 @@ export async function runRepl(options: ReplOptions): Promise<void> {
   });
 
   let running = true;
-  while (running) {
-    const q = query({
-      prompt: currentInput.iterable,
-      options: {
-        resume: currentSessionId,
-        cwd: options.dir,
-        mcpServers: { mekiri: tools },
-      },
-    });
+  try {
+    while (running) {
+      const q = query({
+        prompt: currentInput.iterable,
+        options: {
+          resume: currentSessionId,
+          cwd: options.dir,
+          mcpServers: { mekiri: tools },
+        },
+      });
 
-    for await (const message of q) {
-      transcript.push(message);
+      for await (const message of q) {
+        transcript.push(message);
 
-      if (message.type === "system" && message.subtype === "init") {
-        currentSessionId = message.session_id;
-      }
+        if (message.type === "system" && message.subtype === "init") {
+          currentSessionId = message.session_id;
+        }
 
-      if (message.type === "assistant") {
-        for (const block of message.message.content) {
-          if (block.type === "text") {
-            process.stdout.write(block.text);
+        if (message.type === "assistant") {
+          for (const block of message.message.content) {
+            if (block.type === "text") {
+              process.stdout.write(block.text);
+            }
           }
+        }
+
+        if (pendingSwitch) {
+          await q.return(undefined);
+          break;
         }
       }
 
       if (pendingSwitch) {
-        await q.return(undefined);
-        break;
+        const { newSessionId, injectText } = pendingSwitch;
+        pendingSwitch = null;
+        currentSessionId = newSessionId;
+        transcript = createLiveTranscript();
+        currentInput = createInputQueue();
+        currentInput.push(injectText);
+        continue;
       }
-    }
 
-    if (pendingSwitch) {
-      const { newSessionId, injectText } = pendingSwitch;
-      pendingSwitch = null;
-      currentSessionId = newSessionId;
-      transcript = createLiveTranscript();
-      currentInput = createInputQueue();
-      currentInput.push(injectText);
-      continue;
+      running = false;
     }
-
-    running = false;
+  } finally {
+    rl.close();
   }
-
-  rl.close();
 }
