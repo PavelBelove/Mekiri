@@ -5,25 +5,30 @@ const ParallelismSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("parallel"), count: z.number().int().min(1) }),
 ]);
 
+const SproutSchema = z.object({
+  depth_limit: z.number().int().min(0).default(1),
+  parallelism: ParallelismSchema.default({ mode: "single" }),
+  wait_mode: z.enum(["sync", "async"]).default("sync"),
+});
+
+const PrioritiesSchema = z.object({
+  token_efficiency: z.enum(["aggressive", "balanced", "irrelevant"]).default("balanced"),
+});
+
 export const MekiriConfigSchema = z.object({
-  sprout: z
-    .object({
-      depth_limit: z.number().int().min(0).default(1),
-      parallelism: ParallelismSchema.default({ mode: "single" }),
-      wait_mode: z.enum(["sync", "async"]).default("sync"),
-    })
-    .optional(),
-  priorities: z
-    .object({
-      token_efficiency: z.enum(["aggressive", "balanced", "irrelevant"]).default("balanced"),
-    })
-    .optional(),
+  // The outer default is *derived* by re-parsing {} through the same inner
+  // schema, rather than a hand-written literal — zod v4's .default() does
+  // not itself cascade an inner schema's per-field defaults when the outer
+  // key is entirely absent (verified empirically against zod 4.4.3), so a
+  // static/literal outer default would silently drift from the per-field
+  // defaults above it. Deriving it this way keeps exactly one source of
+  // truth for every default value.
+  sprout: SproutSchema.default(() => SproutSchema.parse({})),
+  priorities: PrioritiesSchema.default(() => PrioritiesSchema.parse({})),
 });
 
 export type MekiriConfig = z.infer<typeof MekiriConfigSchema>;
 
 export function defaultConfig(): MekiriConfig {
-  // Pass explicit empty objects to trigger per-field defaults.
-  // This eliminates the duplication that previously existed in the outer .default(() => ({...})) literals.
-  return MekiriConfigSchema.parse({ sprout: {}, priorities: {} });
+  return MekiriConfigSchema.parse({});
 }
