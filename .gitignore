@@ -13,3 +13,11 @@ Thumbs.db
 
 # Scratch/tmp
 *.tmp
+
+# Node / TypeScript build artifacts
+node_modules/
+dist/
+*.tsbuildinfo
+
+# subagent-driven-development ledger/scratch (per superpowers:subagent-driven-development)
+.superpowers/
