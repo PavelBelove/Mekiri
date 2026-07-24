@@ -73,7 +73,9 @@ describe("mekiri-core end-to-end: read dirty logs, then prune(portal)", () => {
     if (!fruitCheck.ok) return;
 
     const fruitLength = JSON.stringify(fruitCheck.fruit).length;
-    const removedBranchLength = lines.length - 2; // only a2 is discarded
+    // Character length of the discarded content (only a2 is discarded), matching
+    // fruitLength's unit so distillationRatio computes a dimensionally coherent ratio.
+    const removedBranchLength = JSON.stringify(a2).length;
 
     const { newSessionId } = await createBranch({
       branchType: "prune",

@@ -8,7 +8,8 @@ export interface PruneAuditEntry {
   sessionId: string;
   newSessionId: string;
   noteType: NoteType;
-  /** Number of transcript lines removed by this prune. */
+  /** Length in characters of the removed branch content — a Phase 1 proxy metric.
+   *  Real token counts require live SDK usage data (see mekiri-host plan). */
   removedBranchLength: number;
   /** Length in characters of the serialized fruit — a Phase 1 proxy metric.
    *  Real token counts require live SDK usage data (see mekiri-host plan). */
@@ -20,7 +21,7 @@ export interface SproutAuditEntry {
   timestamp: string;
   sessionId: string;
   childSessionId: string;
-  /** Number of transcript lines produced by the sprouted branch. */
+  /** Length in characters of the serialized sprouted branch content — Phase 1 proxy metric. */
   branchLength: number;
   /** Length in characters of the serialized harvest result — Phase 1 proxy metric. */
   harvestLength: number;
