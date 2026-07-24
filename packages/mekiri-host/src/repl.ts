@@ -1,4 +1,5 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import * as readline from "node:readline";
 import { createInputQueue } from "./inputQueue.js";
 import { createLiveTranscript } from "./liveTranscript.js";
@@ -8,6 +9,23 @@ export interface ReplOptions {
   resumeSessionId?: string;
   dir: string;
 }
+
+// mekiri-host is only responsible for permissioning its own MCP tool(s) —
+// the "mekiri" server registered by createMekiriTools (currently just
+// "prune"). Everything else (Bash, file edits, other MCP servers, etc.)
+// falls through to the SDK's normal/default permission handling by
+// returning null. Matching the "mcp__mekiri__" prefix rather than the
+// single literal "mcp__mekiri__prune" keeps this future-proof: any tool
+// added to createMekiriTools later is auto-approved without another repl.ts
+// change, and the prefix can't collide with other servers since the SDK's
+// "mcp__<serverName>__<toolName>" naming ties it to the "mekiri" name we
+// pass to createSdkMcpServer.
+export const canUseTool: CanUseTool = async (toolName) => {
+  if (toolName.startsWith("mcp__mekiri__")) {
+    return { behavior: "allow" };
+  }
+  return null;
+};
 
 export async function runRepl(options: ReplOptions): Promise<void> {
   let currentInput = createInputQueue();
@@ -39,6 +57,7 @@ export async function runRepl(options: ReplOptions): Promise<void> {
           resume: currentSessionId,
           cwd: options.dir,
           mcpServers: { mekiri: tools },
+          canUseTool,
         },
       });
 
