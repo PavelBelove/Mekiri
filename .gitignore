@@ -1,0 +1,15 @@
+# Claude Code local/machine-specific settings (per-developer, not shared)
+.claude/settings.local.json
+.claude/*.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Scratch/tmp
+*.tmp
