@@ -12,22 +12,18 @@ export const MekiriConfigSchema = z.object({
       parallelism: ParallelismSchema.default({ mode: "single" }),
       wait_mode: z.enum(["sync", "async"]).default("sync"),
     })
-    .default(() => ({
-      depth_limit: 1,
-      parallelism: { mode: "single" },
-      wait_mode: "sync",
-    })),
+    .optional(),
   priorities: z
     .object({
       token_efficiency: z.enum(["aggressive", "balanced", "irrelevant"]).default("balanced"),
     })
-    .default(() => ({
-      token_efficiency: "balanced",
-    })),
+    .optional(),
 });
 
 export type MekiriConfig = z.infer<typeof MekiriConfigSchema>;
 
 export function defaultConfig(): MekiriConfig {
-  return MekiriConfigSchema.parse({});
+  // Pass explicit empty objects to trigger per-field defaults.
+  // This eliminates the duplication that previously existed in the outer .default(() => ({...})) literals.
+  return MekiriConfigSchema.parse({ sprout: {}, priorities: {} });
 }
