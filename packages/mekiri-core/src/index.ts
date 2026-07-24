@@ -20,3 +20,5 @@ export { loadConfig, saveConfig, applyConfigPatch } from "./configStore.js";
 export type { ConfigPatchResult } from "./configStore.js";
 export { appendAuditEntry, readAuditLog } from "./auditLog.js";
 export type { AuditEntry, PruneAuditEntry, SproutAuditEntry, ConfigureAuditEntry } from "./auditLog.js";
+export { createBranch } from "./branch.js";
+export type { CreateBranchArgs, CreateBranchResult } from "./branch.js";
