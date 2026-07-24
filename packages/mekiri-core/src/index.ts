@@ -22,3 +22,4 @@ export { appendAuditEntry, readAuditLog } from "./auditLog.js";
 export type { AuditEntry, PruneAuditEntry, SproutAuditEntry, ConfigureAuditEntry } from "./auditLog.js";
 export { createBranch } from "./branch.js";
 export type { CreateBranchArgs, CreateBranchResult } from "./branch.js";
+export { distillationRatio, branchCompression, lifetimeTokenSavings, contextRecyclingRatio } from "./metrics.js";
