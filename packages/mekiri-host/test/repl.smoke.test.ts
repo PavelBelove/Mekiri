@@ -468,7 +468,7 @@ describe("mekiri-host live smoke test: mekiri-gate/mekiri-tuning skill discovery
 
     // The SDK's canonical skill id for a plugin-qualified skill is
     // "<pluginName>:<skillName>" (confirmed both by this live run and by
-    // sdk.d.ts's own doc comment on SkillsMessageInput.skills: "matching the
+    // sdk.d.ts's own doc comment on Options.skills: "matching the
     // exact canonical name (e.g. \"my-plugin:my-skill\")"). Our plugin's
     // name is "mekiri" (packages/mekiri-host/skills-plugin/.claude-plugin/
     // plugin.json), so the discovered ids are namespaced accordingly rather
