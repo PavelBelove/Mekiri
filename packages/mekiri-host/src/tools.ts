@@ -220,7 +220,7 @@ export async function handleConfigure(context: MekiriToolsContext, args: Configu
   const current = await loadConfig(context.dir);
   const result = applyConfigPatch(current, args.patch);
   if (result.status === "invalid") {
-    return { content: [{ type: "text", text: `invalid config patch: ${result.errors.join("; ")}` }], isError: true };
+    return { content: [{ type: "text", text: JSON.stringify({ status: "invalid", errors: result.errors }) }], isError: true };
   }
 
   await saveConfig(context.dir, result.config);
@@ -271,6 +271,14 @@ export function createMekiriTools(context: MekiriToolsContext): McpSdkServerConf
     async (args) => (await handleSprout(context, args as SproutArgs)) as CallToolResult,
   );
 
+  // Deliberately unrestricted: a clone at any depth can patch any field,
+  // including sprout.depth_limit -- which elsewhere in this file acts as a
+  // safety ceiling on sprout recursion (see handleSprout's depth check).
+  // Flagged in the final whole-branch review of this feature; the project
+  // owner's explicit call was to accept this rather than add isClone
+  // gating or a schema-level max, since the audit log's `reason` field
+  // already records who changed it and why. Revisit if runaway sprout
+  // recursion driven by a self-escalated depth_limit is ever observed.
   const configureTool = tool(
     "configure_mekiri",
     "Patch Mekiri's own runtime configuration (.mekiri/config.json): sprout.depth_limit, sprout.parallelism, sprout.wait_mode, priorities.token_efficiency. The patch is deep-merged with the current config and validated as a whole; an invalid patch is rejected with no changes made. Available to the parent and to clones at any depth.",
