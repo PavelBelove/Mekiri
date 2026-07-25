@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { handlePrune } from "../src/tools.js";
+import { handlePrune, handleHarvest } from "../src/tools.js";
+import type { HarvestArgs } from "../src/tools.js";
 import type { RawLine } from "mekiri-core";
 
 // Session-file test helpers mirroring mekiri-core's test/helpers/sessionFile.ts
@@ -55,10 +56,15 @@ describe("handlePrune", () => {
   function makeContext() {
     return {
       dir: projectDir,
+      depth: 0,
+      isClone: false,
       getSessionId: () => SESSION_ID,
       getTranscript: () => transcriptLines,
       onSwitch: (newSessionId: string, injectText: string) => {
         switchCalls.push({ newSessionId, injectText });
+      },
+      onHarvest: () => {
+        throw new Error("onHarvest should not be called from a prune-only test");
       },
     };
   }
@@ -100,5 +106,66 @@ describe("handlePrune", () => {
     expect(result.isError).toBeFalsy();
     expect(JSON.stringify(result.content)).toContain("not_found");
     expect(switchCalls).toHaveLength(0);
+  });
+});
+
+describe("handleHarvest", () => {
+  function makeClonelikeContext(onHarvest: (result: string, needsCleanLook: boolean) => void) {
+    return {
+      dir: "/irrelevant/for/this/test",
+      depth: 1,
+      isClone: true,
+      getSessionId: () => "aaaaaaaa-0000-4000-8000-000000000099",
+      getTranscript: () => [],
+      onSwitch: () => {},
+      onHarvest,
+    };
+  }
+
+  function makeParentContext() {
+    return {
+      dir: "/irrelevant/for/this/test",
+      depth: 0,
+      isClone: false,
+      getSessionId: () => "aaaaaaaa-0000-4000-8000-000000000098",
+      getTranscript: () => [],
+      onSwitch: () => {},
+      onHarvest: () => {
+        throw new Error("onHarvest should never be called when isClone is false");
+      },
+    };
+  }
+
+  it("calls onHarvest with the result and needsCleanLook when isClone is true", async () => {
+    let captured: { result: string; needsCleanLook: boolean } | null = null;
+    const context = makeClonelikeContext((result, needsCleanLook) => {
+      captured = { result, needsCleanLook };
+    });
+
+    const args: HarvestArgs = { result: "the distilled answer", needs_clean_look: true };
+    const output = await handleHarvest(context, args);
+
+    expect(output.isError).toBeFalsy();
+    expect(captured).toEqual({ result: "the distilled answer", needsCleanLook: true });
+  });
+
+  it("defaults needsCleanLook to false when needs_clean_look is omitted", async () => {
+    let captured: { result: string; needsCleanLook: boolean } | null = null;
+    const context = makeClonelikeContext((result, needsCleanLook) => {
+      captured = { result, needsCleanLook };
+    });
+
+    await handleHarvest(context, { result: "ok" });
+
+    expect(captured).toEqual({ result: "ok", needsCleanLook: false });
+  });
+
+  it("returns an error result and never calls onHarvest when isClone is false", async () => {
+    const context = makeParentContext();
+
+    const output = await handleHarvest(context, { result: "should not apply" });
+
+    expect(output.isError).toBe(true);
+    expect(JSON.stringify(output.content)).toContain("harvest валиден только внутри sprout-клона");
   });
 });

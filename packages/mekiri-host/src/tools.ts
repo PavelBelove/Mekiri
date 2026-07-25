@@ -50,9 +50,12 @@ async function createBranchWithRetry(args: CreateBranchArgs): Promise<CreateBran
 
 export interface MekiriToolsContext {
   dir: string;
+  depth: number;
+  isClone: boolean;
   getSessionId: () => string;
   getTranscript: () => RawLine[];
   onSwitch: (newSessionId: string, injectText: string) => void;
+  onHarvest: (result: string, needsCleanLook: boolean) => void;
 }
 
 export interface PruneArgs {
@@ -125,6 +128,19 @@ export async function handlePrune(context: MekiriToolsContext, args: PruneArgs):
   return { content: [{ type: "text", text: `ok: new_session_id=${newSessionId}` }] };
 }
 
+export interface HarvestArgs {
+  result: string;
+  needs_clean_look?: boolean;
+}
+
+export async function handleHarvest(context: MekiriToolsContext, args: HarvestArgs): Promise<PruneToolResult> {
+  if (!context.isClone) {
+    return { content: [{ type: "text", text: "harvest валиден только внутри sprout-клона" }], isError: true };
+  }
+  context.onHarvest(args.result, args.needs_clean_look ?? false);
+  return { content: [{ type: "text", text: "ok" }] };
+}
+
 export function createMekiriTools(context: MekiriToolsContext): McpSdkServerConfigWithInstance {
   const pruneTool = tool(
     "prune",
@@ -138,5 +154,18 @@ export function createMekiriTools(context: MekiriToolsContext): McpSdkServerConf
     async (args) => (await handlePrune(context, args as PruneArgs)) as CallToolResult,
   );
 
-  return createSdkMcpServer({ name: "mekiri", version: "0.1.0", tools: [pruneTool] });
+  const harvestTool = tool(
+    "harvest",
+    "Return your result to the parent that sprouted you and end this clone. Only valid inside a sprout clone.",
+    {
+      result: z.string().describe("The distilled result to hand back to the parent"),
+      needs_clean_look: z
+        .boolean()
+        .optional()
+        .describe("Set true to flag that this result is uncertain and the parent should get a fresh perspective instead of trusting it"),
+    },
+    async (args) => (await handleHarvest(context, args as HarvestArgs)) as CallToolResult,
+  );
+
+  return createSdkMcpServer({ name: "mekiri", version: "0.1.0", tools: [pruneTool, harvestTool] });
 }
