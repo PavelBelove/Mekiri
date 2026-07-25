@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type { CanUseTool, Options } from "@anthropic-ai/claude-agent-sdk";
 
 // mekiri-host is only responsible for permissioning its own MCP tool(s) —
@@ -53,6 +55,13 @@ export function formatQueryErrorMessage(error: unknown): string {
   return `mekiri-host: query error: ${detail}. Type your next message to try resuming this session, or Ctrl+C to exit.`;
 }
 
+// mekiri-gate/mekiri-tuning ship as a local SDK plugin bundled with
+// mekiri-host itself, not with whatever project is being hosted (--dir) --
+// they must be available regardless of which project mekiri-host points at.
+// import.meta.dirname is this file's own directory (src/ in dev, dist/ after
+// build); skills-plugin/ sits one level up from either.
+const SKILLS_PLUGIN_PATH = path.join(import.meta.dirname, "..", "skills-plugin");
+
 // Builds the exact options object passed to query() inside runRepl()/
 // runClone(), split out so tests can assert on the real code path (that
 // canUseTool is actually wired in) instead of only on the standalone
@@ -67,5 +76,6 @@ export function buildQueryOptions(context: {
     cwd: context.cwd,
     mcpServers: context.mcpServers,
     canUseTool,
+    plugins: [{ type: "local", path: SKILLS_PLUGIN_PATH }],
   };
 }

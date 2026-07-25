@@ -163,6 +163,15 @@ describe("buildQueryOptions", () => {
     });
     expect(options.canUseTool).toBe(canUseTool);
   });
+
+  it("wires the mekiri skills-plugin into the options object", () => {
+    const options = buildQueryOptions({
+      resume: undefined,
+      cwd: "/tmp/does-not-matter",
+      mcpServers: { mekiri: {} as never },
+    });
+    expect(options.plugins).toEqual([{ type: "local", path: expect.stringContaining("skills-plugin") }]);
+  });
 });
 
 // A real query()/stream failure (auth expiry, rate limit, network blip) is
