@@ -5,7 +5,7 @@ import path from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createInputQueue } from "../src/inputQueue.js";
 import { createMekiriTools } from "../src/tools.js";
-import { canUseTool, buildQueryOptions, formatQueryErrorMessage } from "../src/repl.js";
+import { canUseTool, buildQueryOptions, formatQueryErrorMessage } from "../src/permissions.js";
 import type { RawLine } from "mekiri-core";
 
 // Session-file test helper mirroring test/tools.test.ts's convention (same
