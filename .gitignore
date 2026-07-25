@@ -21,3 +21,6 @@ dist/
 
 # subagent-driven-development ledger/scratch (per superpowers:subagent-driven-development)
 .superpowers/
+
+# mekiri-host runtime state (audit log, config) created by actually using prune/sprout
+.mekiri/
