@@ -7,6 +7,7 @@ import { createInputQueue } from "../src/inputQueue.js";
 import { createMekiriTools, handleSprout } from "../src/tools.js";
 import { canUseTool, buildQueryOptions, formatQueryErrorMessage } from "../src/permissions.js";
 import { writeSessionFile, copyRealCredentials } from "./helpers/sessionFile.js";
+import { loadConfig, readAuditLog } from "mekiri-core";
 import type { RawLine } from "mekiri-core";
 
 // These tests make real, billed API calls. Keep them to the minimum needed
@@ -361,4 +362,72 @@ describe("mekiri-host live smoke test: sprout/harvest end-to-end from the parent
     expect(parsed.status).toBe("ok");
     expect(parsed.result).toBe("PRUNE_THEN_HARVEST_OK");
   }, 90_000);
+});
+
+describe("mekiri-host live smoke test: configure_mekiri tool wiring", () => {
+  it("a real model turn that calls configure_mekiri completes and persists the patched config", async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), "mekiri-host-configure-smoke-"));
+
+    try {
+      const tools = createMekiriTools({
+        dir: projectDir,
+        depth: 0,
+        isClone: false,
+        getSessionId: () => "unused-in-this-test",
+        getTranscript: () => [],
+        onSwitch: () => {
+          throw new Error("onSwitch should not be called from a configure smoke test");
+        },
+        onHarvest: () => {
+          throw new Error("onHarvest should not be called from a configure smoke test");
+        },
+      });
+
+      const { iterable, push, close } = createInputQueue();
+      push(
+        [
+          "Call the configure_mekiri tool (mcp__mekiri__configure_mekiri) right now, in this turn, with exactly these arguments and no others:",
+          'patch: {"priorities": {"token_efficiency": "aggressive"}}',
+          'reason: "smoke test"',
+          "The mcp__mekiri__configure_mekiri tool is already directly available to you -- do not use ToolSearch or any other lookup tool first, and do not call any other tool. Make mcp__mekiri__configure_mekiri your first and only tool call, immediately. Do not ask for permission or confirmation, and do not explain what you are about to do first -- just make the tool call.",
+        ].join("\n"),
+      );
+      close();
+
+      let sawToolResult = false;
+
+      const q = query({
+        prompt: iterable,
+        options: {
+          cwd: projectDir,
+          mcpServers: { mekiri: tools },
+          canUseTool,
+        },
+      });
+
+      for await (const message of q) {
+        if (message.type === "user") {
+          const content = message.message.content;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (block && typeof block === "object" && "type" in block && block.type === "tool_result") {
+                sawToolResult = true;
+              }
+            }
+          }
+        }
+      }
+
+      expect(sawToolResult).toBe(true);
+
+      const persisted = await loadConfig(projectDir);
+      expect(persisted.priorities.token_efficiency).toBe("aggressive");
+
+      const log = await readAuditLog(projectDir);
+      expect(log).toHaveLength(1);
+      expect(log[0].event).toBe("configure_mekiri");
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
