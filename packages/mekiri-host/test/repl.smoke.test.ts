@@ -440,3 +440,40 @@ describe("mekiri-host live smoke test: configure_mekiri tool wiring", () => {
     }
   }, 60_000);
 });
+
+// Real, billed proof that the SDK's own skill discovery actually finds
+// mekiri-gate/mekiri-tuning through the bundled local plugin -- this is an
+// SDK-internal filesystem walk (SDKSystemMessage.skills), not something a
+// unit test can fake. Breaks immediately after the init message; no need to
+// pay for a full turn since only skill discovery is under test here.
+describe("mekiri-host live smoke test: mekiri-gate/mekiri-tuning skill discovery", () => {
+  it("the real SDK discovers both mekiri skills through the bundled local plugin", async () => {
+    const { iterable, push, close } = createInputQueue();
+    push("Reply with exactly one word: ok");
+    close();
+
+    let discoveredSkills: string[] | undefined;
+
+    const q = query({
+      prompt: iterable,
+      options: buildQueryOptions({ resume: undefined, cwd: process.cwd(), mcpServers: {} }),
+    });
+    for await (const message of q) {
+      if (message.type === "system" && message.subtype === "init") {
+        discoveredSkills = message.skills;
+        await q.return(undefined);
+        break;
+      }
+    }
+
+    // The SDK's canonical skill id for a plugin-qualified skill is
+    // "<pluginName>:<skillName>" (confirmed both by this live run and by
+    // sdk.d.ts's own doc comment on SkillsMessageInput.skills: "matching the
+    // exact canonical name (e.g. \"my-plugin:my-skill\")"). Our plugin's
+    // name is "mekiri" (packages/mekiri-host/skills-plugin/.claude-plugin/
+    // plugin.json), so the discovered ids are namespaced accordingly rather
+    // than the bare skill names.
+    expect(discoveredSkills).toContain("mekiri:mekiri-gate");
+    expect(discoveredSkills).toContain("mekiri:mekiri-tuning");
+  }, 60_000);
+});
