@@ -3,7 +3,50 @@ import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { validateFruit, findBoundary, createBranch } from "mekiri-core";
-import type { RawLine, NoteType } from "mekiri-core";
+import type { RawLine, NoteType, CreateBranchArgs, CreateBranchResult } from "mekiri-core";
+
+// The Agent SDK's forkSession() reads the source session's transcript
+// straight off disk. Its write path streams SDKAssistantMessage objects to
+// this process as soon as they're produced, but the underlying CLI
+// subprocess flushes the corresponding line to the on-disk .jsonl file
+// slightly later and asynchronously (there is no public knob to force a
+// synchronous flush before fork — see Options.sessionStoreFlush, which is
+// documented as only applying to the opt-in external SessionStore feature
+// we don't use). If createBranch()'s forkSession call lands in that gap, it
+// throws a plain `Error` with a message of the shape
+// "Message <uuid> not found in session <sessionId>" (see the SDK's `mF`
+// helper in sdk.mjs) even though the message legitimately exists and will
+// be on disk moments later.
+//
+// This was confirmed empirically (not just theorized): a standalone repro
+// script that called forkSession immediately upon receiving the matching
+// SDKAssistantMessage failed 7/7 times at t=0ms, still failed most of the
+// time at t+50ms, and consistently succeeded by t+100..350ms cumulative
+// wait. The retry schedule below is sized with headroom above that
+// observed window while staying well under "feels sluggish" territory.
+const FORK_RETRY_DELAYS_MS = [50, 100, 200, 400];
+
+function isTransientForkNotFoundError(err: unknown): boolean {
+  return err instanceof Error && /not found in session/.test(err.message);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function createBranchWithRetry(args: CreateBranchArgs): Promise<CreateBranchResult> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await createBranch(args);
+    } catch (err) {
+      const attemptsLeft = attempt < FORK_RETRY_DELAYS_MS.length;
+      if (!isTransientForkNotFoundError(err) || !attemptsLeft) {
+        throw err;
+      }
+      await sleep(FORK_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+}
 
 export interface MekiriToolsContext {
   dir: string;
@@ -45,16 +88,32 @@ export async function handlePrune(context: MekiriToolsContext, args: PruneArgs):
   const removedBranchLength = JSON.stringify(removedLines).length;
   const fruitLength = JSON.stringify(validation.fruit).length;
 
-  const { newSessionId } = await createBranch({
-    branchType: "prune",
-    sessionId: context.getSessionId(),
-    dir: context.dir,
-    upToMessageId: boundary.uuid,
-    noteType: args.note_type,
-    removedBranchLength,
-    fruitLength,
-    auditProjectDir: context.dir,
-  });
+  let newSessionId: string;
+  try {
+    ({ newSessionId } = await createBranchWithRetry({
+      branchType: "prune",
+      sessionId: context.getSessionId(),
+      dir: context.dir,
+      upToMessageId: boundary.uuid,
+      noteType: args.note_type,
+      removedBranchLength,
+      fruitLength,
+      auditProjectDir: context.dir,
+    }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      content: [
+        {
+          type: "text",
+          text: isTransientForkNotFoundError(err)
+            ? `prune failed: the session transcript hadn't finished writing to disk in time (retried ${FORK_RETRY_DELAYS_MS.length} times over ~${FORK_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0)}ms). Try again in a moment. (${message})`
+            : `prune failed: ${message}`,
+        },
+      ],
+      isError: true,
+    };
+  }
 
   const injectText = [
     "[branch_type:prune, branch archived, resuming from fruit]",
