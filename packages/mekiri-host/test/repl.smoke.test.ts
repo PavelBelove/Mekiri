@@ -5,7 +5,7 @@ import path from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createInputQueue } from "../src/inputQueue.js";
 import { createMekiriTools } from "../src/tools.js";
-import { canUseTool, buildQueryOptions } from "../src/repl.js";
+import { canUseTool, buildQueryOptions, formatQueryErrorMessage } from "../src/repl.js";
 import type { RawLine } from "mekiri-core";
 
 // Session-file test helper mirroring test/tools.test.ts's convention (same
@@ -188,6 +188,29 @@ describe("buildQueryOptions", () => {
       mcpServers: { mekiri: {} as never },
     });
     expect(options.canUseTool).toBe(canUseTool);
+  });
+});
+
+// A real query()/stream failure (auth expiry, rate limit, network blip) is
+// hard to reproduce deterministically and not worth a live API call to
+// force, so this tests the extracted pure formatter instead — the piece of
+// runRepl()'s error-handling that actually decides what the user is told.
+// The surrounding try/catch + `continue` control flow in runRepl() (which
+// keeps currentSessionId set and re-enters the while loop instead of
+// letting the error propagate and crash the process) is covered by manual
+// code review plus the live smoke tests above, which exercise the same
+// for-await loop machinery on the happy path.
+describe("formatQueryErrorMessage", () => {
+  it("includes the error's message and tells the user how to keep going", () => {
+    const message = formatQueryErrorMessage(new Error("rate limited"));
+    expect(message).toContain("rate limited");
+    expect(message).toContain("Type your next message to try resuming this session");
+    expect(message).toContain("Ctrl+C to exit");
+  });
+
+  it("falls back to String() for non-Error throws", () => {
+    const message = formatQueryErrorMessage("network blip");
+    expect(message).toContain("network blip");
   });
 });
 
