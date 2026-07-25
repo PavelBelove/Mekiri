@@ -1,9 +1,11 @@
 import { z } from "zod";
-import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { tool, createSdkMcpServer, forkSession } from "@anthropic-ai/claude-agent-sdk";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { validateFruit, findBoundary, createBranch } from "mekiri-core";
-import type { RawLine, NoteType, CreateBranchArgs, CreateBranchResult } from "mekiri-core";
+import { validateFruit, findBoundary, createBranch, loadConfig, appendAuditEntry } from "mekiri-core";
+import type { RawLine, NoteType, CreateBranchArgs, CreateBranchResult, SproutAuditEntry } from "mekiri-core";
+import { runClone } from "./clone.js";
+import type { CloneDynamicContext } from "./clone.js";
 
 // The Agent SDK's forkSession() reads the source session's transcript
 // straight off disk. Its write path streams SDKAssistantMessage objects to
@@ -141,6 +143,74 @@ export async function handleHarvest(context: MekiriToolsContext, args: HarvestAr
   return { content: [{ type: "text", text: "ok" }] };
 }
 
+export interface SproutArgs {
+  task: string;
+}
+
+export async function handleSprout(context: MekiriToolsContext, args: SproutArgs): Promise<PruneToolResult> {
+  const config = await loadConfig(context.dir);
+  const childDepth = context.depth + 1;
+  if (childDepth > config.sprout.depth_limit) {
+    return { content: [{ type: "text", text: JSON.stringify({ status: "depth_limit_exceeded" }) }] };
+  }
+
+  const { sessionId: forkedSessionId } = await forkSession(context.getSessionId(), { dir: context.dir });
+
+  const buildTools = (dynamic: CloneDynamicContext) =>
+    createMekiriTools({
+      dir: context.dir,
+      depth: childDepth,
+      isClone: true,
+      ...dynamic,
+    });
+
+  // Found by live dogfooding (not anticipated in the plan): without explicit
+  // framing, a model forked into a clone with no other context has no way
+  // to know it *is* a clone -- the harvest tool's own description says
+  // "only valid inside a sprout clone," and a model reasonably refuses to
+  // call it rather than assume that's true. The inherited context (whatever
+  // the parent already knew about prune/sprout/harvest, per the cache
+  // invariant -- see 2026-07-24-core-primitive-design.md §2) is not enough
+  // on its own; the tail message has to say so explicitly, the same way
+  // prune's injectText frames the post-prune continuation.
+  const framedTask = [
+    "[branch_type:sprout] You are a warm clone, just forked from a parent session to work one task in isolation.",
+    "Your task:",
+    args.task,
+    "",
+    "When you're done, call harvest with your result -- the parent is waiting for it and will not see anything else you do here.",
+    "If a hypothesis or approach doesn't pan out along the way, prune works exactly as it would for your parent: archive the dead end and continue from a distilled note.",
+  ].join("\n");
+
+  const cloneResult = await runClone(framedTask, forkedSessionId, context.dir, buildTools);
+
+  const auditEntry: SproutAuditEntry = {
+    event: "sprout",
+    timestamp: new Date().toISOString(),
+    sessionId: context.getSessionId(),
+    childSessionId: forkedSessionId,
+    branchLength: cloneResult.branchLength,
+    harvestLength: JSON.stringify(cloneResult.result).length,
+  };
+  await appendAuditEntry(context.dir, auditEntry);
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          status: "ok",
+          branch_type: "sprout",
+          child_session_id: forkedSessionId,
+          result: cloneResult.result,
+          ...(cloneResult.harvestedImplicitly ? { harvested_implicitly: true } : {}),
+          ...(cloneResult.needsCleanLook ? { needs_clean_look: true } : {}),
+        }),
+      },
+    ],
+  };
+}
+
 export function createMekiriTools(context: MekiriToolsContext): McpSdkServerConfigWithInstance {
   const pruneTool = tool(
     "prune",
@@ -167,5 +237,14 @@ export function createMekiriTools(context: MekiriToolsContext): McpSdkServerConf
     async (args) => (await handleHarvest(context, args as HarvestArgs)) as CallToolResult,
   );
 
-  return createSdkMcpServer({ name: "mekiri", version: "0.1.0", tools: [pruneTool, harvestTool] });
+  const sproutTool = tool(
+    "sprout",
+    "Fork a warm clone of the current session to work a side task in isolation, without disturbing this session. The clone inherits full context and can use prune/sprout/harvest itself. Call harvest inside the clone when its task is done.",
+    {
+      task: z.string().describe("The clone's new main task, appended to its copy of the current context"),
+    },
+    async (args) => (await handleSprout(context, args as SproutArgs)) as CallToolResult,
+  );
+
+  return createSdkMcpServer({ name: "mekiri", version: "0.1.0", tools: [pruneTool, sproutTool, harvestTool] });
 }

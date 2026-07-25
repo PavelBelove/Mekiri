@@ -2,9 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { handlePrune, handleHarvest } from "../src/tools.js";
-import type { HarvestArgs } from "../src/tools.js";
+import { handlePrune, handleHarvest, handleSprout } from "../src/tools.js";
+import type { HarvestArgs, SproutArgs } from "../src/tools.js";
 import type { RawLine } from "mekiri-core";
+import { readAuditLog } from "mekiri-core";
 
 // Session-file test helpers mirroring mekiri-core's test/helpers/sessionFile.ts
 // (same CLAUDE_CONFIG_DIR + dir + slash-to-dash sanitization convention,
@@ -168,4 +169,123 @@ describe("handleHarvest", () => {
     expect(output.isError).toBe(true);
     expect(JSON.stringify(output.content)).toContain("harvest валиден только внутри sprout-клона");
   });
+});
+
+// handleSprout makes real, billed API calls (it drives a full runClone()
+// internally). Kept to the minimum needed to prove the mechanics per the
+// project's live-test-budget policy.
+describe("handleSprout", () => {
+  let sproutConfigDir: string;
+  let sproutProjectDir: string;
+  let sproutOriginalConfigDir: string | undefined;
+
+  beforeEach(async () => {
+    sproutConfigDir = await mkdtemp(path.join(tmpdir(), "mekiri-host-sprout-config-"));
+    sproutProjectDir = await mkdtemp(path.join(tmpdir(), "mekiri-host-sprout-project-"));
+    sproutOriginalConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = sproutConfigDir;
+  });
+
+  afterEach(async () => {
+    if (sproutOriginalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = sproutOriginalConfigDir;
+    await rm(sproutConfigDir, { recursive: true, force: true });
+    await rm(sproutProjectDir, { recursive: true, force: true });
+  });
+
+  it("returns depth_limit_exceeded without forking when the child depth exceeds the default limit", async () => {
+    // Default depth_limit is 1 (mekiri-core's defaultConfig, no .mekiri/config.json
+    // written in this test project dir), so a context already at depth 1 must
+    // refuse to sprout a depth-2 child.
+    const context = {
+      dir: sproutProjectDir,
+      depth: 1,
+      isClone: true,
+      getSessionId: () => "aaaaaaaa-0000-4000-8000-000000000097",
+      getTranscript: () => [],
+      onSwitch: () => {},
+      onHarvest: () => {},
+    };
+
+    const output = await handleSprout(context, { task: "irrelevant, should be refused before starting" });
+
+    expect(output.isError).toBeFalsy();
+    expect(JSON.stringify(output.content)).toContain("depth_limit_exceeded");
+  });
+
+  it("forks a real child, runs it to a real harvest, and records a sprout audit entry with real lengths", async () => {
+    // Seed a minimal real session file for handleSprout's context.getSessionId()
+    // to fork from, following the same UUID-format-id + CLAUDE_CONFIG_DIR/dir
+    // convention established in mekiri-core's own branch.test.ts.
+    const { promises: fs } = await import("node:fs");
+    const os = await import("node:os");
+
+    // This test makes a REAL live query() call (handleSprout -> runClone),
+    // which needs real auth -- but CLAUDE_CONFIG_DIR is redirected to an
+    // empty temp dir above (for forkSession's fixture-file isolation), and
+    // that's also where the CLI subprocess looks for .credentials.json.
+    // Bridge the two needs by copying the real credentials file into the
+    // isolated temp config dir (discovered empirically: without this, the
+    // live call fails with "Not logged in - Please run /login" even though
+    // every other live test in this project, none of which override
+    // CLAUDE_CONFIG_DIR, works fine).
+    try {
+      await fs.copyFile(
+        path.join(os.homedir(), ".claude", ".credentials.json"),
+        path.join(sproutConfigDir, ".credentials.json"),
+      );
+    } catch (err) {
+      throw new Error(
+        `Could not copy ~/.claude/.credentials.json into the isolated CLAUDE_CONFIG_DIR for this live test: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    const sanitizeDir = (dir: string) => dir.replace(/[^a-zA-Z0-9]/g, "-");
+    const parentSessionId = "bbbbbbbb-0000-4000-8000-000000000001";
+    const sessionFilePath = path.join(sproutConfigDir, "projects", sanitizeDir(sproutProjectDir), `${parentSessionId}.jsonl`);
+    await fs.mkdir(path.dirname(sessionFilePath), { recursive: true });
+    await fs.writeFile(
+      sessionFilePath,
+      `${JSON.stringify({
+        type: "user",
+        uuid: "cccccccc-0000-4000-8000-000000000001",
+        parentUuid: null,
+        isSidechain: false,
+        message: { role: "user", content: "hello" },
+      })}\n`,
+      "utf8",
+    );
+
+    const context = {
+      dir: sproutProjectDir,
+      depth: 0,
+      isClone: false,
+      getSessionId: () => parentSessionId,
+      getTranscript: () => [],
+      onSwitch: () => {},
+      onHarvest: () => {},
+    };
+
+    const args: SproutArgs = {
+      task: "Call the mcp__mekiri__harvest tool right now with result set to exactly the string SPROUT_TEST_RESULT. Do not say anything else first.",
+    };
+    const output = await handleSprout(context, args);
+
+    expect(output.isError).toBeFalsy();
+    const parsed = JSON.parse((output.content[0] as { text: string }).text);
+    expect(parsed.status).toBe("ok");
+    expect(parsed.child_session_id).not.toBe(parentSessionId);
+    expect(parsed.result).toBe("SPROUT_TEST_RESULT");
+    expect(parsed.harvested_implicitly).toBeUndefined();
+
+    const log = await readAuditLog(sproutProjectDir);
+    expect(log).toHaveLength(1);
+    expect(log[0].event).toBe("sprout");
+    if (log[0].event === "sprout") {
+      expect(log[0].sessionId).toBe(parentSessionId);
+      expect(log[0].childSessionId).toBe(parsed.child_session_id);
+      expect(log[0].branchLength).toBeGreaterThan(0);
+      expect(log[0].harvestLength).toBe(JSON.stringify("SPROUT_TEST_RESULT").length);
+    }
+  }, 60_000);
 });
