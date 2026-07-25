@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createInputQueue } from "../src/inputQueue.js";
-import { createMekiriTools } from "../src/tools.js";
+import { createMekiriTools, handleSprout } from "../src/tools.js";
 import { canUseTool, buildQueryOptions, formatQueryErrorMessage } from "../src/permissions.js";
 import { writeSessionFile, copyRealCredentials } from "./helpers/sessionFile.js";
 import type { RawLine } from "mekiri-core";
@@ -288,4 +288,77 @@ describe("mekiri-host live smoke test: prune tool permission wiring", () => {
     expect(switchCalls[0].injectText).toContain("smoke test prune");
     expect(sawToolResult).toBe(true);
   }, 60_000);
+});
+
+// Real, billed end-to-end proof that sprout/harvest work from the actual
+// parent code path (runRepl's own createMekiriTools wiring), not just via
+// tools.test.ts's direct handleSprout calls. Deliberately drives handleSprout
+// directly with the real createMekiriTools (rather than spinning up a full
+// runRepl() with readline, which has no clean way to await from a test) --
+// this still exercises the real depth:0/isClone:false parent context shape
+// wired in repl.ts, just without the readline/stdin layer runRepl adds on
+// top. Uses process.cwd() (the real repo) as dir and does not override
+// CLAUDE_CONFIG_DIR, so no credential copying is needed here (same as the
+// other live tests in this file's main describe block).
+describe("mekiri-host live smoke test: sprout/harvest end-to-end from the parent's real tool wiring", () => {
+  it("a clone can prune its own failed hypothesis, then harvest the successful path", async () => {
+    const dir = process.cwd();
+    let parentSessionId: string | undefined;
+
+    const parentTools = createMekiriTools({
+      dir,
+      depth: 0,
+      isClone: false,
+      getSessionId: () => {
+        if (!parentSessionId) throw new Error("no parent session id yet");
+        return parentSessionId;
+      },
+      getTranscript: () => [],
+      onSwitch: () => {
+        throw new Error("parent should not prune itself in this test");
+      },
+      onHarvest: () => {
+        throw new Error("parent should never receive a harvest call directly");
+      },
+    });
+
+    // Establish a real parent session id the same way repl.ts does: run one
+    // trivial turn and read session_id off the system/init message.
+    const seed = createInputQueue();
+    seed.push("Reply with exactly one word: ok");
+    seed.close();
+    const seedQuery = query({
+      prompt: seed.iterable,
+      options: buildQueryOptions({ resume: undefined, cwd: dir, mcpServers: { mekiri: parentTools } }),
+    });
+    for await (const message of seedQuery) {
+      if (message.type === "system" && message.subtype === "init") {
+        parentSessionId = message.session_id;
+      }
+    }
+    expect(parentSessionId).toBeTruthy();
+
+    // Now drive a real sprout via the same handleSprout the sprout tool
+    // calls, through the real parent context shape.
+    const output = await handleSprout(
+      {
+        dir,
+        depth: 0,
+        isClone: false,
+        getSessionId: () => parentSessionId as string,
+        getTranscript: () => [],
+        onSwitch: () => {},
+        onHarvest: () => {},
+      },
+      {
+        task:
+          "First, state the sentence: Trying hypothesis A now, this is a test. Then immediately call the mcp__mekiri__prune tool with quote set to the verbatim text 'Trying hypothesis A now, this is a test', note_type 'death_reload', fruit set to {\"tried\": \"hypothesis A\", \"ruled_out\": \"A does not apply here, this is a scripted test\"}, and keep_code true. After the prune call returns you will be in a fresh continuation of this same task -- at that point call the mcp__mekiri__harvest tool with result set to exactly the string PRUNE_THEN_HARVEST_OK and nothing else.",
+      },
+    );
+
+    expect(output.isError).toBeFalsy();
+    const parsed = JSON.parse((output.content[0] as { text: string }).text);
+    expect(parsed.status).toBe("ok");
+    expect(parsed.result).toBe("PRUNE_THEN_HARVEST_OK");
+  }, 90_000);
 });
