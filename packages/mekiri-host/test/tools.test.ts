@@ -6,19 +6,7 @@ import { handlePrune, handleHarvest, handleSprout } from "../src/tools.js";
 import type { HarvestArgs, SproutArgs } from "../src/tools.js";
 import type { RawLine } from "mekiri-core";
 import { readAuditLog } from "mekiri-core";
-
-// Session-file test helpers mirroring mekiri-core's test/helpers/sessionFile.ts
-// (same CLAUDE_CONFIG_DIR + dir + slash-to-dash sanitization convention,
-// verified during mekiri-core's Task 7 against the compiled SDK).
-function sanitizeDir(dir: string): string {
-  return dir.replace(/[^a-zA-Z0-9]/g, "-");
-}
-async function writeSessionFile(configDir: string, dir: string, sessionId: string, lines: RawLine[]): Promise<void> {
-  const { promises: fs } = await import("node:fs");
-  const filePath = path.join(configDir, "projects", sanitizeDir(dir), `${sessionId}.jsonl`);
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf8");
-}
+import { sanitizeDir, writeSessionFile, copyRealCredentials } from "./helpers/sessionFile.js";
 
 const SESSION_ID = "66666666-6666-4666-8666-666666666666";
 const U1_UUID = "77777777-7777-4777-8777-777777777777";
@@ -218,29 +206,12 @@ describe("handleSprout", () => {
     // to fork from, following the same UUID-format-id + CLAUDE_CONFIG_DIR/dir
     // convention established in mekiri-core's own branch.test.ts.
     const { promises: fs } = await import("node:fs");
-    const os = await import("node:os");
 
     // This test makes a REAL live query() call (handleSprout -> runClone),
-    // which needs real auth -- but CLAUDE_CONFIG_DIR is redirected to an
-    // empty temp dir above (for forkSession's fixture-file isolation), and
-    // that's also where the CLI subprocess looks for .credentials.json.
-    // Bridge the two needs by copying the real credentials file into the
-    // isolated temp config dir (discovered empirically: without this, the
-    // live call fails with "Not logged in - Please run /login" even though
-    // every other live test in this project, none of which override
-    // CLAUDE_CONFIG_DIR, works fine).
-    try {
-      await fs.copyFile(
-        path.join(os.homedir(), ".claude", ".credentials.json"),
-        path.join(sproutConfigDir, ".credentials.json"),
-      );
-    } catch (err) {
-      throw new Error(
-        `Could not copy ~/.claude/.credentials.json into the isolated CLAUDE_CONFIG_DIR for this live test: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    // which needs real auth credentials copied into the isolated
+    // CLAUDE_CONFIG_DIR -- see copyRealCredentials's own doc comment for why.
+    await copyRealCredentials(sproutConfigDir);
 
-    const sanitizeDir = (dir: string) => dir.replace(/[^a-zA-Z0-9]/g, "-");
     const parentSessionId = "bbbbbbbb-0000-4000-8000-000000000001";
     const sessionFilePath = path.join(sproutConfigDir, "projects", sanitizeDir(sproutProjectDir), `${parentSessionId}.jsonl`);
     await fs.mkdir(path.dirname(sessionFilePath), { recursive: true });

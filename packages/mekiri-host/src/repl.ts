@@ -23,6 +23,8 @@ export async function runRepl(options: ReplOptions): Promise<void> {
 
   const tools = createMekiriTools({
     dir: options.dir,
+    depth: 0,
+    isClone: false,
     getSessionId: () => {
       if (!currentSessionId) throw new Error("mekiri-host: no active session id yet");
       return currentSessionId;
@@ -30,6 +32,12 @@ export async function runRepl(options: ReplOptions): Promise<void> {
     getTranscript: () => transcript.getLines(),
     onSwitch: (newSessionId, injectText) => {
       pendingSwitch = { newSessionId, injectText };
+    },
+    onHarvest: () => {
+      // Unreachable: handleHarvest checks context.isClone (false here, the
+      // parent is never a clone) and returns an error result before ever
+      // calling this callback. Present only to satisfy the type.
+      throw new Error("mekiri-host: onHarvest should never be invoked at the parent (isClone: false)");
     },
   });
 

@@ -1,40 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, copyFile } from "node:fs/promises";
-import { tmpdir, homedir } from "node:os";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createInputQueue } from "../src/inputQueue.js";
 import { createMekiriTools } from "../src/tools.js";
 import { canUseTool, buildQueryOptions, formatQueryErrorMessage } from "../src/permissions.js";
+import { writeSessionFile, copyRealCredentials } from "./helpers/sessionFile.js";
 import type { RawLine } from "mekiri-core";
-
-// Session-file test helper mirroring test/tools.test.ts's convention (same
-// CLAUDE_CONFIG_DIR + dir + slash-to-dash sanitization, verified against the
-// compiled SDK during mekiri-core's Task 7).
-function sanitizeDir(dir: string): string {
-  return dir.replace(/[^a-zA-Z0-9]/g, "-");
-}
-async function writeSessionFile(configDir: string, dir: string, sessionId: string, lines: RawLine[]): Promise<void> {
-  const { promises: fs } = await import("node:fs");
-  const filePath = path.join(configDir, "projects", sanitizeDir(dir), `${sessionId}.jsonl`);
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf8");
-}
-
-// The SDK resolves auth credentials from CLAUDE_CONFIG_DIR/.credentials.json
-// (falling back to ~/.claude when CLAUDE_CONFIG_DIR is unset). Overriding
-// CLAUDE_CONFIG_DIR to an empty temp dir (needed so mekiri's session-file
-// reads are isolated to the fixture, same as tools.test.ts) otherwise makes
-// a real query() fail with "Not logged in" — so copy the real credentials
-// file into the fixture config dir too. Best-effort: if it's missing (e.g.
-// CI using a different auth mechanism), let query() surface its own error.
-async function copyRealCredentials(configDir: string): Promise<void> {
-  try {
-    await copyFile(path.join(homedir(), ".claude", ".credentials.json"), path.join(configDir, ".credentials.json"));
-  } catch {
-    // no credentials file to copy; fall through and let query() report auth failure
-  }
-}
 
 // These tests make real, billed API calls. Keep them to the minimum needed
 // to prove the wiring this task adds actually works end to end — everything
@@ -261,10 +234,15 @@ describe("mekiri-host live smoke test: prune tool permission wiring", () => {
 
     const tools = createMekiriTools({
       dir: projectDir,
+      depth: 0,
+      isClone: false,
       getSessionId: () => SESSION_ID,
       getTranscript: () => transcriptLines,
       onSwitch: (newSessionId, injectText) => {
         switchCalls.push({ newSessionId, injectText });
+      },
+      onHarvest: () => {
+        throw new Error("onHarvest should not be called from a prune-only test");
       },
     });
 
