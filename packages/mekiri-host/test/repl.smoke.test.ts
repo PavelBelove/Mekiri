@@ -5,7 +5,7 @@ import path from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createInputQueue } from "../src/inputQueue.js";
 import { createMekiriTools } from "../src/tools.js";
-import { canUseTool } from "../src/repl.js";
+import { canUseTool, buildQueryOptions } from "../src/repl.js";
 import type { RawLine } from "mekiri-core";
 
 // Session-file test helper mirroring test/tools.test.ts's convention (same
@@ -145,6 +145,50 @@ describe("mekiri-host live smoke test", () => {
     expect(secondSessionId).toBe(sessionId);
     expect(sawAssistantText).toBe(true);
   }, 60_000);
+});
+
+// Unit-style (no live API call needed): the bug fixed here was in
+// canUseTool's *return value* for non-mekiri tools, not in live SDK
+// behavior, so a direct call is the cheapest deterministic way to prove it.
+// Previously this branch returned `null`, which the SDK's own contract
+// documents as fail-closed ("an accidental null means no control_response
+// is sent and the tool stays blocked indefinitely") — i.e. a silent hang
+// with no visible prompt at all. It must now return an explicit `deny` so
+// the model sees a fast, honest failure instead.
+describe("canUseTool: non-mekiri tools", () => {
+  const dummyCallOptions = {
+    signal: new AbortController().signal,
+    toolUseID: "test-tool-use-id",
+    requestId: "test-request-id",
+  };
+
+  it("returns an explicit deny (never null) for a tool outside the mcp__mekiri__ prefix", async () => {
+    const result = await canUseTool("Bash", { command: "echo hi" }, dummyCallOptions);
+    expect(result).not.toBeNull();
+    expect(result).toEqual({ behavior: "deny", message: expect.any(String) });
+  });
+
+  it("still allows mcp__mekiri__ tools", async () => {
+    const result = await canUseTool("mcp__mekiri__prune", {}, dummyCallOptions);
+    expect(result).toEqual({ behavior: "allow" });
+  });
+});
+
+// Closes the gap where a prior regression test reconstructed its own
+// query() call instead of exercising runRepl()'s actual code path: this
+// asserts that the exact options object runRepl() passes to query() (via
+// the shared buildQueryOptions helper) wires canUseTool in, so a future
+// change that stops wiring it into runRepl() specifically (not just the
+// standalone canUseTool export) would be caught.
+describe("buildQueryOptions", () => {
+  it("wires the fixed canUseTool into the options object runRepl() passes to query()", () => {
+    const options = buildQueryOptions({
+      resume: undefined,
+      cwd: "/tmp/does-not-matter",
+      mcpServers: { mekiri: {} as never },
+    });
+    expect(options.canUseTool).toBe(canUseTool);
+  });
 });
 
 // Regression test for the hang found via manual dogfooding: repl.ts wires
