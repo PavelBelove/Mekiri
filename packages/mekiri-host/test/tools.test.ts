@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { handlePrune, handleHarvest, handleSprout } from "../src/tools.js";
-import type { HarvestArgs, SproutArgs } from "../src/tools.js";
+import { handlePrune, handleHarvest, handleSprout, handleConfigure } from "../src/tools.js";
+import type { HarvestArgs, SproutArgs, ConfigureArgs } from "../src/tools.js";
 import type { RawLine } from "mekiri-core";
-import { readAuditLog } from "mekiri-core";
+import { readAuditLog, loadConfig, defaultConfig } from "mekiri-core";
 import { sanitizeDir, writeSessionFile, copyRealCredentials } from "./helpers/sessionFile.js";
 
 const SESSION_ID = "66666666-6666-4666-8666-666666666666";
@@ -259,4 +259,85 @@ describe("handleSprout", () => {
       expect(log[0].harvestLength).toBe(JSON.stringify("SPROUT_TEST_RESULT").length);
     }
   }, 60_000);
+});
+
+describe("handleConfigure", () => {
+  let configureProjectDir: string;
+
+  beforeEach(async () => {
+    configureProjectDir = await mkdtemp(path.join(tmpdir(), "mekiri-host-configure-project-"));
+  });
+
+  afterEach(async () => {
+    await rm(configureProjectDir, { recursive: true, force: true });
+  });
+
+  function makeContext() {
+    return {
+      dir: configureProjectDir,
+      depth: 0,
+      isClone: false,
+      getSessionId: () => "aaaaaaaa-0000-4000-8000-000000000096",
+      getTranscript: () => [],
+      onSwitch: () => {
+        throw new Error("onSwitch should not be called from a configure test");
+      },
+      onHarvest: () => {
+        throw new Error("onHarvest should not be called from a configure test");
+      },
+    };
+  }
+
+  it("applies a valid patch, persists it to disk, and records an audit entry", async () => {
+    const args: ConfigureArgs = { patch: { sprout: { depth_limit: 2 } }, reason: "widen depth for this task" };
+
+    const output = await handleConfigure(makeContext(), args);
+
+    expect(output.isError).toBeFalsy();
+    const parsed = JSON.parse((output.content[0] as { text: string }).text);
+    expect(parsed.status).toBe("ok");
+    expect(parsed.config.sprout.depth_limit).toBe(2);
+
+    const persisted = await loadConfig(configureProjectDir);
+    expect(persisted.sprout.depth_limit).toBe(2);
+
+    const log = await readAuditLog(configureProjectDir);
+    expect(log).toHaveLength(1);
+    expect(log[0].event).toBe("configure_mekiri");
+    if (log[0].event === "configure_mekiri") {
+      expect(log[0].reason).toBe("widen depth for this task");
+      expect(log[0].patch).toEqual({ sprout: { depth_limit: 2 } });
+    }
+  });
+
+  it("returns an error result, does not persist, and does not record an audit entry when the patch is invalid", async () => {
+    const args: ConfigureArgs = { patch: { sprout: { depth_limit: -1 } }, reason: "should be rejected" };
+
+    const output = await handleConfigure(makeContext(), args);
+
+    expect(output.isError).toBe(true);
+
+    const persisted = await loadConfig(configureProjectDir);
+    expect(persisted).toEqual(defaultConfig());
+
+    const log = await readAuditLog(configureProjectDir);
+    expect(log).toHaveLength(0);
+  });
+
+  it("deep-merges a patch, leaving unrelated fields untouched", async () => {
+    await handleConfigure(makeContext(), { patch: { sprout: { depth_limit: 3 } }, reason: "first change" });
+
+    const output = await handleConfigure(makeContext(), {
+      patch: { priorities: { token_efficiency: "aggressive" } },
+      reason: "second change",
+    });
+
+    expect(output.isError).toBeFalsy();
+    const parsed = JSON.parse((output.content[0] as { text: string }).text);
+    expect(parsed.config.priorities.token_efficiency).toBe("aggressive");
+    expect(parsed.config.sprout.depth_limit).toBe(3);
+
+    const log = await readAuditLog(configureProjectDir);
+    expect(log).toHaveLength(2);
+  });
 });

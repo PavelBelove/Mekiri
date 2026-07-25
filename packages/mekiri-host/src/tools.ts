@@ -2,8 +2,8 @@ import { z } from "zod";
 import { tool, createSdkMcpServer, forkSession } from "@anthropic-ai/claude-agent-sdk";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { validateFruit, findBoundary, createBranch, loadConfig, appendAuditEntry } from "mekiri-core";
-import type { RawLine, NoteType, CreateBranchArgs, CreateBranchResult, SproutAuditEntry } from "mekiri-core";
+import { validateFruit, findBoundary, createBranch, loadConfig, saveConfig, applyConfigPatch, appendAuditEntry } from "mekiri-core";
+import type { RawLine, NoteType, CreateBranchArgs, CreateBranchResult, SproutAuditEntry, ConfigureAuditEntry } from "mekiri-core";
 import { runClone } from "./clone.js";
 import type { CloneDynamicContext } from "./clone.js";
 
@@ -211,6 +211,31 @@ export async function handleSprout(context: MekiriToolsContext, args: SproutArgs
   };
 }
 
+export interface ConfigureArgs {
+  patch: Record<string, unknown>;
+  reason: string;
+}
+
+export async function handleConfigure(context: MekiriToolsContext, args: ConfigureArgs): Promise<PruneToolResult> {
+  const current = await loadConfig(context.dir);
+  const result = applyConfigPatch(current, args.patch);
+  if (result.status === "invalid") {
+    return { content: [{ type: "text", text: `invalid config patch: ${result.errors.join("; ")}` }], isError: true };
+  }
+
+  await saveConfig(context.dir, result.config);
+
+  const auditEntry: ConfigureAuditEntry = {
+    event: "configure_mekiri",
+    timestamp: new Date().toISOString(),
+    reason: args.reason,
+    patch: args.patch,
+  };
+  await appendAuditEntry(context.dir, auditEntry);
+
+  return { content: [{ type: "text", text: JSON.stringify({ status: "ok", config: result.config }) }] };
+}
+
 export function createMekiriTools(context: MekiriToolsContext): McpSdkServerConfigWithInstance {
   const pruneTool = tool(
     "prune",
@@ -246,5 +271,15 @@ export function createMekiriTools(context: MekiriToolsContext): McpSdkServerConf
     async (args) => (await handleSprout(context, args as SproutArgs)) as CallToolResult,
   );
 
-  return createSdkMcpServer({ name: "mekiri", version: "0.1.0", tools: [pruneTool, sproutTool, harvestTool] });
+  const configureTool = tool(
+    "configure_mekiri",
+    "Patch Mekiri's own runtime configuration (.mekiri/config.json): sprout.depth_limit, sprout.parallelism, sprout.wait_mode, priorities.token_efficiency. The patch is deep-merged with the current config and validated as a whole; an invalid patch is rejected with no changes made. Available to the parent and to clones at any depth.",
+    {
+      patch: z.record(z.string(), z.unknown()).describe("Partial config object, deep-merged with the current config"),
+      reason: z.string().describe("Why this change is being made -- recorded in the audit log"),
+    },
+    async (args) => (await handleConfigure(context, args as ConfigureArgs)) as CallToolResult,
+  );
+
+  return createSdkMcpServer({ name: "mekiri", version: "0.1.0", tools: [pruneTool, sproutTool, harvestTool, configureTool] });
 }
