@@ -486,3 +486,62 @@ describe("mekiri-host live smoke test: mekiri-gate/mekiri-tuning skill discovery
     expect(discoveredSkills).toContain("mekiri:mekiri-tuning");
   }, 60_000);
 });
+
+// Real, billed proof that the system prompt actually steers behavior, not
+// just that the field is set (Task 1 already proves wiring). Presents a
+// dispatch-ambiguous task with no explicit mention of prune/sprout/
+// mekiri-gate, and asks for a short reasoned tool choice before doing any
+// real work -- this bounds cost regardless of what it decides, and the
+// onSwitch/onHarvest stubs throw if it disobeys and calls prune/sprout
+// anyway. Checks the full turn's content (text AND any tool-call inputs,
+// not just printed text) for a mention of "mekiri-gate" by name, since the
+// system prompt explicitly names it and a real live dogfooding run under
+// this same wiring already showed the model narrating exactly this
+// ("Использую gate: ...") once instructed.
+describe("mekiri-host live smoke test: system prompt steers dispatch behavior", () => {
+  it("proactively names mekiri-gate when facing a dispatch-ambiguous task, without being told to", async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), "mekiri-host-sysprompt-smoke-"));
+
+    try {
+      const tools = createMekiriTools({
+        dir: projectDir,
+        depth: 0,
+        isClone: false,
+        getSessionId: () => "unused-in-this-test",
+        getTranscript: () => [],
+        onSwitch: () => {
+          throw new Error("prune should not be called -- the task explicitly asks only for an explanation");
+        },
+        onHarvest: () => {
+          throw new Error("harvest should not be called -- the task explicitly asks only for an explanation");
+        },
+      });
+
+      const { iterable, push, close } = createInputQueue();
+      push(
+        [
+          'Есть неоднозначная по способу решения задача: "Разберись с багом в парсере конфига, а я пока продолжаю писать документацию в другом месте."',
+          "Прежде чем действовать, сначала одним-двумя предложениями объясни, каким способом и почему ты будешь её решать. Не выполняй саму работу и не вызывай prune/sprout/harvest/configure_mekiri -- просто объясни свой выбор и подожди подтверждения.",
+        ].join("\n"),
+      );
+      close();
+
+      const blocks: unknown[] = [];
+
+      const q = query({
+        prompt: iterable,
+        options: buildQueryOptions({ resume: undefined, cwd: projectDir, mcpServers: { mekiri: tools } }),
+      });
+      for await (const message of q) {
+        if (message.type === "assistant") {
+          blocks.push(...message.message.content);
+        }
+      }
+
+      const combined = JSON.stringify(blocks).toLowerCase();
+      expect(combined).toContain("mekiri-gate");
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
