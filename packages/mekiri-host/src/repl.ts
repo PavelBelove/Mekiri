@@ -4,6 +4,7 @@ import { createInputQueue } from "./inputQueue.js";
 import { createLiveTranscript } from "./liveTranscript.js";
 import { createMekiriTools } from "./tools.js";
 import { buildQueryOptions, formatQueryErrorMessage } from "./permissions.js";
+import { createAsyncSproutLimiter } from "./asyncSproutLimiter.js";
 
 export { canUseTool, buildQueryOptions, formatQueryErrorMessage } from "./permissions.js";
 
@@ -20,6 +21,8 @@ export async function runRepl(options: ReplOptions): Promise<void> {
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   rl.on("line", (line) => currentInput.push(line));
+
+  const asyncSproutLimiter = createAsyncSproutLimiter();
 
   const tools = createMekiriTools({
     dir: options.dir,
@@ -38,6 +41,10 @@ export async function runRepl(options: ReplOptions): Promise<void> {
       // parent is never a clone) and returns an error result before ever
       // calling this callback. Present only to satisfy the type.
       throw new Error("mekiri-host: onHarvest should never be invoked at the parent (isClone: false)");
+    },
+    asyncSproutLimiter,
+    onAsyncSproutComplete: (injectText) => {
+      currentInput.push(injectText);
     },
   });
 
