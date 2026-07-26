@@ -3,9 +3,10 @@ import { tool, createSdkMcpServer, forkSession } from "@anthropic-ai/claude-agen
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { validateFruit, findBoundary, createBranch, loadConfig, saveConfig, applyConfigPatch, appendAuditEntry } from "mekiri-core";
-import type { RawLine, NoteType, CreateBranchArgs, CreateBranchResult, SproutAuditEntry, ConfigureAuditEntry } from "mekiri-core";
+import type { RawLine, NoteType, CreateBranchArgs, CreateBranchResult, SproutAuditEntry, ConfigureAuditEntry, MekiriConfig } from "mekiri-core";
 import { runClone } from "./clone.js";
 import type { CloneDynamicContext } from "./clone.js";
+import type { AsyncSproutLimiter } from "./asyncSproutLimiter.js";
 
 // The Agent SDK's forkSession() reads the source session's transcript
 // straight off disk. Its write path streams SDKAssistantMessage objects to
@@ -58,6 +59,8 @@ export interface MekiriToolsContext {
   getTranscript: () => RawLine[];
   onSwitch: (newSessionId: string, injectText: string) => void;
   onHarvest: (result: string, needsCleanLook: boolean) => void;
+  asyncSproutLimiter: AsyncSproutLimiter;
+  onAsyncSproutComplete: (injectText: string) => void;
 }
 
 export interface PruneArgs {
@@ -145,6 +148,23 @@ export async function handleHarvest(context: MekiriToolsContext, args: HarvestAr
 
 export interface SproutArgs {
   task: string;
+  wait_mode?: "sync" | "async";
+}
+
+export function resolveParallelismLimit(parallelism: MekiriConfig["sprout"]["parallelism"]): number {
+  return parallelism.mode === "single" ? 1 : parallelism.count;
+}
+
+export function formatAsyncSproutSuccess(childSessionId: string, result: string): string {
+  return [`[branch_type:sprout, async result for child_session_id:${childSessionId}]`, result].join("\n");
+}
+
+export function formatAsyncSproutError(childSessionId: string, error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  return [
+    `[branch_type:sprout, async error for child_session_id:${childSessionId}]`,
+    `The background clone failed and did not harvest: ${detail}`,
+  ].join("\n");
 }
 
 export async function handleSprout(context: MekiriToolsContext, args: SproutArgs): Promise<PruneToolResult> {
@@ -154,6 +174,27 @@ export async function handleSprout(context: MekiriToolsContext, args: SproutArgs
     return { content: [{ type: "text", text: JSON.stringify({ status: "depth_limit_exceeded" }) }] };
   }
 
+  const waitMode = args.wait_mode ?? config.sprout.wait_mode;
+
+  if (waitMode === "async" && context.isClone) {
+    return { content: [{ type: "text", text: JSON.stringify({ status: "async_not_supported_in_clone" }) }] };
+  }
+
+  let limit: number | undefined;
+  if (waitMode === "async") {
+    limit = resolveParallelismLimit(config.sprout.parallelism);
+    if (!context.asyncSproutLimiter.tryAcquire(limit)) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ status: "parallelism_limit_exceeded", active: context.asyncSproutLimiter.active, limit }),
+          },
+        ],
+      };
+    }
+  }
+
   const { sessionId: forkedSessionId } = await forkSession(context.getSessionId(), { dir: context.dir });
 
   const buildTools = (dynamic: CloneDynamicContext) =>
@@ -161,6 +202,10 @@ export async function handleSprout(context: MekiriToolsContext, args: SproutArgs
       dir: context.dir,
       depth: childDepth,
       isClone: true,
+      asyncSproutLimiter: context.asyncSproutLimiter,
+      onAsyncSproutComplete: () => {
+        throw new Error("mekiri-host: onAsyncSproutComplete should never be invoked from a clone context -- async sprout is parent-only");
+      },
       ...dynamic,
     });
 
@@ -181,6 +226,36 @@ export async function handleSprout(context: MekiriToolsContext, args: SproutArgs
     "When you're done, call harvest with your result -- the parent is waiting for it and will not see anything else you do here.",
     "If a hypothesis or approach doesn't pan out along the way, prune works exactly as it would for your parent: archive the dead end and continue from a distilled note.",
   ].join("\n");
+
+  if (waitMode === "async") {
+    runClone(framedTask, forkedSessionId, context.dir, buildTools)
+      .then(async (cloneResult) => {
+        const auditEntry: SproutAuditEntry = {
+          event: "sprout",
+          timestamp: new Date().toISOString(),
+          sessionId: context.getSessionId(),
+          childSessionId: forkedSessionId,
+          branchLength: cloneResult.branchLength,
+          harvestLength: JSON.stringify(cloneResult.result).length,
+        };
+        await appendAuditEntry(context.dir, auditEntry);
+        context.asyncSproutLimiter.release();
+        context.onAsyncSproutComplete(formatAsyncSproutSuccess(forkedSessionId, cloneResult.result));
+      })
+      .catch((err) => {
+        context.asyncSproutLimiter.release();
+        context.onAsyncSproutComplete(formatAsyncSproutError(forkedSessionId, err));
+      });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({ status: "ok", branch_type: "sprout", child_session_id: forkedSessionId, pending: true }),
+        },
+      ],
+    };
+  }
 
   const cloneResult = await runClone(framedTask, forkedSessionId, context.dir, buildTools);
 
@@ -264,9 +339,13 @@ export function createMekiriTools(context: MekiriToolsContext): McpSdkServerConf
 
   const sproutTool = tool(
     "sprout",
-    "Fork a warm clone of the current session to work a side task in isolation, without disturbing this session. The clone inherits full context and can use prune/sprout/harvest itself. Call harvest inside the clone when its task is done.",
+    "Fork a warm clone of the current session to work a side task in isolation, without disturbing this session. The clone inherits full context and can use prune/sprout/harvest itself. Call harvest inside the clone when its task is done. wait_mode:'async' (parent session only, not valid from inside a clone) returns immediately with pending:true; the clone's result is delivered later as a separate message once it finishes.",
     {
       task: z.string().describe("The clone's new main task, appended to its copy of the current context"),
+      wait_mode: z
+        .enum(["sync", "async"])
+        .optional()
+        .describe("Override the configured default. 'async' is only valid for the parent session, not from inside a clone."),
     },
     async (args) => (await handleSprout(context, args as SproutArgs)) as CallToolResult,
   );

@@ -2,11 +2,20 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { handlePrune, handleHarvest, handleSprout, handleConfigure } from "../src/tools.js";
+import {
+  handlePrune,
+  handleHarvest,
+  handleSprout,
+  handleConfigure,
+  resolveParallelismLimit,
+  formatAsyncSproutSuccess,
+  formatAsyncSproutError,
+} from "../src/tools.js";
 import type { HarvestArgs, SproutArgs, ConfigureArgs } from "../src/tools.js";
 import type { RawLine } from "mekiri-core";
 import { readAuditLog, loadConfig, defaultConfig } from "mekiri-core";
 import { sanitizeDir, writeSessionFile, copyRealCredentials } from "./helpers/sessionFile.js";
+import { createAsyncSproutLimiter } from "../src/asyncSproutLimiter.js";
 
 const SESSION_ID = "66666666-6666-4666-8666-666666666666";
 const U1_UUID = "77777777-7777-4777-8777-777777777777";
@@ -54,6 +63,10 @@ describe("handlePrune", () => {
       },
       onHarvest: () => {
         throw new Error("onHarvest should not be called from a prune-only test");
+      },
+      asyncSproutLimiter: createAsyncSproutLimiter(),
+      onAsyncSproutComplete: () => {
+        throw new Error("onAsyncSproutComplete should not be called in this test");
       },
     };
   }
@@ -108,6 +121,10 @@ describe("handleHarvest", () => {
       getTranscript: () => [],
       onSwitch: () => {},
       onHarvest,
+      asyncSproutLimiter: createAsyncSproutLimiter(),
+      onAsyncSproutComplete: () => {
+        throw new Error("onAsyncSproutComplete should not be called in this test");
+      },
     };
   }
 
@@ -121,6 +138,10 @@ describe("handleHarvest", () => {
       onSwitch: () => {},
       onHarvest: () => {
         throw new Error("onHarvest should never be called when isClone is false");
+      },
+      asyncSproutLimiter: createAsyncSproutLimiter(),
+      onAsyncSproutComplete: () => {
+        throw new Error("onAsyncSproutComplete should not be called in this test");
       },
     };
   }
@@ -193,6 +214,10 @@ describe("handleSprout", () => {
       getTranscript: () => [],
       onSwitch: () => {},
       onHarvest: () => {},
+      asyncSproutLimiter: createAsyncSproutLimiter(),
+      onAsyncSproutComplete: () => {
+        throw new Error("onAsyncSproutComplete should not be called in this test");
+      },
     };
 
     const output = await handleSprout(context, { task: "irrelevant, should be refused before starting" });
@@ -235,6 +260,10 @@ describe("handleSprout", () => {
       getTranscript: () => [],
       onSwitch: () => {},
       onHarvest: () => {},
+      asyncSproutLimiter: createAsyncSproutLimiter(),
+      onAsyncSproutComplete: () => {
+        throw new Error("onAsyncSproutComplete should not be called in this test");
+      },
     };
 
     const args: SproutArgs = {
@@ -261,6 +290,103 @@ describe("handleSprout", () => {
   }, 60_000);
 });
 
+describe("resolveParallelismLimit", () => {
+  it("returns 1 for mode:'single'", () => {
+    expect(resolveParallelismLimit({ mode: "single" })).toBe(1);
+  });
+
+  it("returns count for mode:'parallel'", () => {
+    expect(resolveParallelismLimit({ mode: "parallel", count: 3 })).toBe(3);
+  });
+});
+
+describe("formatAsyncSproutSuccess / formatAsyncSproutError", () => {
+  it("formats a success message with the child session id and result", () => {
+    const text = formatAsyncSproutSuccess("child-123", "the distilled result");
+    expect(text).toContain("child-123");
+    expect(text).toContain("the distilled result");
+    expect(text).toContain("branch_type:sprout");
+  });
+
+  it("formats an error message with the child session id and error detail", () => {
+    const text = formatAsyncSproutError("child-456", new Error("network blip"));
+    expect(text).toContain("child-456");
+    expect(text).toContain("network blip");
+  });
+
+  it("falls back to String() for non-Error throws in the error formatter", () => {
+    const text = formatAsyncSproutError("child-789", "raw string failure");
+    expect(text).toContain("raw string failure");
+  });
+});
+
+describe("handleSprout: async wait_mode rejections", () => {
+  it("rejects wait_mode:'async' when called from inside a clone", async () => {
+    // depth is 0 here (not 1) so that this context stays within the default
+    // sprout.depth_limit of 1 (loadConfig on a non-existent dir falls back
+    // to defaultConfig()) -- childDepth = depth + 1 must not exceed the
+    // limit, otherwise handleSprout's depth check fires first and this test
+    // would observe "depth_limit_exceeded" instead of the async-in-clone
+    // rejection it's actually targeting. isClone:true is what matters for
+    // this test, independent of depth.
+    const context = {
+      dir: "/tmp/does-not-matter",
+      depth: 0,
+      isClone: true,
+      getSessionId: () => "session-id",
+      getTranscript: () => [],
+      onSwitch: () => {
+        throw new Error("onSwitch should not be called");
+      },
+      onHarvest: () => {
+        throw new Error("onHarvest should not be called");
+      },
+      asyncSproutLimiter: createAsyncSproutLimiter(),
+      onAsyncSproutComplete: () => {
+        throw new Error("onAsyncSproutComplete should not be called");
+      },
+    };
+
+    const result = await handleSprout(context, { task: "irrelevant", wait_mode: "async" });
+    const parsed = JSON.parse((result.content[0] as { text: string }).text);
+    expect(parsed.status).toBe("async_not_supported_in_clone");
+  });
+
+  it("rejects when the parallelism limit is already reached", async () => {
+    const limiter = createAsyncSproutLimiter();
+    expect(limiter.tryAcquire(1)).toBe(true);
+
+    const projectDir = await mkdtemp(path.join(tmpdir(), "mekiri-host-sprout-limit-"));
+    try {
+      const context = {
+        dir: projectDir,
+        depth: 0,
+        isClone: false,
+        getSessionId: () => "session-id",
+        getTranscript: () => [],
+        onSwitch: () => {
+          throw new Error("onSwitch should not be called");
+        },
+        onHarvest: () => {
+          throw new Error("onHarvest should not be called");
+        },
+        asyncSproutLimiter: limiter,
+        onAsyncSproutComplete: () => {
+          throw new Error("onAsyncSproutComplete should not be called");
+        },
+      };
+
+      const result = await handleSprout(context, { task: "irrelevant", wait_mode: "async" });
+      const parsed = JSON.parse((result.content[0] as { text: string }).text);
+      expect(parsed.status).toBe("parallelism_limit_exceeded");
+      expect(parsed.active).toBe(1);
+      expect(parsed.limit).toBe(1);
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("handleConfigure", () => {
   let configureProjectDir: string;
 
@@ -284,6 +410,10 @@ describe("handleConfigure", () => {
       },
       onHarvest: () => {
         throw new Error("onHarvest should not be called from a configure test");
+      },
+      asyncSproutLimiter: createAsyncSproutLimiter(),
+      onAsyncSproutComplete: () => {
+        throw new Error("onAsyncSproutComplete should not be called in this test");
       },
     };
   }
