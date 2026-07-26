@@ -6,6 +6,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { UserPromptSubmitHookInput } from "@anthropic-ai/claude-agent-sdk";
 import { createInputQueue } from "../src/inputQueue.js";
 import { createMekiriTools, handleSprout } from "../src/tools.js";
+import { createAsyncSproutLimiter } from "../src/asyncSproutLimiter.js";
 import { canUseTool, buildQueryOptions, formatQueryErrorMessage, MEKIRI_SYSTEM_PROMPT } from "../src/permissions.js";
 import { writeSessionFile, copyRealCredentials } from "./helpers/sessionFile.js";
 import { loadConfig, readAuditLog } from "mekiri-core";
@@ -300,6 +301,10 @@ describe("mekiri-host live smoke test: prune tool permission wiring", () => {
       onHarvest: () => {
         throw new Error("onHarvest should not be called from a prune-only test");
       },
+      asyncSproutLimiter: createAsyncSproutLimiter(),
+      onAsyncSproutComplete: () => {
+        throw new Error("onAsyncSproutComplete should not be called in this test");
+      },
     });
 
     const { iterable, push, close } = createInputQueue();
@@ -376,6 +381,10 @@ describe("mekiri-host live smoke test: sprout/harvest end-to-end from the parent
       onHarvest: () => {
         throw new Error("parent should never receive a harvest call directly");
       },
+      asyncSproutLimiter: createAsyncSproutLimiter(),
+      onAsyncSproutComplete: () => {
+        throw new Error("onAsyncSproutComplete should not be called in this test");
+      },
     });
 
     // Establish a real parent session id the same way repl.ts does: run one
@@ -435,6 +444,10 @@ describe("mekiri-host live smoke test: configure_mekiri tool wiring", () => {
         },
         onHarvest: () => {
           throw new Error("onHarvest should not be called from a configure smoke test");
+        },
+        asyncSproutLimiter: createAsyncSproutLimiter(),
+        onAsyncSproutComplete: () => {
+          throw new Error("onAsyncSproutComplete should not be called in this test");
         },
       });
 
@@ -552,6 +565,10 @@ describe("mekiri-host live smoke test: system prompt steers dispatch behavior", 
         onHarvest: () => {
           throw new Error("harvest should not be called -- the task explicitly asks only for an explanation");
         },
+        asyncSproutLimiter: createAsyncSproutLimiter(),
+        onAsyncSproutComplete: () => {
+          throw new Error("onAsyncSproutComplete should not be called in this test");
+        },
       });
 
       const { iterable, push, close } = createInputQueue();
@@ -627,5 +644,129 @@ describe("mekiri-host live smoke test: UserPromptSubmit hook delivers the mekiri
     } finally {
       await rm(projectDir, { recursive: true, force: true });
     }
+  }, 60_000);
+});
+
+// Real, billed proof that wait_mode:'async' genuinely returns before the
+// clone finishes (not a disguised await) and that the result genuinely
+// arrives later through onAsyncSproutComplete -- Task 2's unit tests only
+// proved the rejection paths and the pure formatters in isolation.
+describe("mekiri-host live smoke test: sprout async wait_mode", () => {
+  it("returns pending immediately and delivers the result later via onAsyncSproutComplete", async () => {
+    const dir = process.cwd();
+    let parentSessionId: string | undefined;
+    const asyncSproutLimiter = createAsyncSproutLimiter();
+
+    let deliveredText: string | undefined;
+    let resolveDelivered: (() => void) | undefined;
+    const delivered = new Promise<void>((resolve) => {
+      resolveDelivered = resolve;
+    });
+
+    const seed = createInputQueue();
+    seed.push("Reply with exactly one word: ok");
+    seed.close();
+    const seedQuery = query({
+      prompt: seed.iterable,
+      options: buildQueryOptions({ resume: undefined, cwd: dir, mcpServers: {} }),
+    });
+    for await (const message of seedQuery) {
+      if (message.type === "system" && message.subtype === "init") {
+        parentSessionId = message.session_id;
+      }
+    }
+    expect(parentSessionId).toBeTruthy();
+
+    const context = {
+      dir,
+      depth: 0,
+      isClone: false,
+      getSessionId: () => parentSessionId as string,
+      getTranscript: () => [],
+      onSwitch: () => {
+        throw new Error("parent should not prune itself in this test");
+      },
+      onHarvest: () => {
+        throw new Error("parent should never receive a harvest call directly");
+      },
+      asyncSproutLimiter,
+      onAsyncSproutComplete: (injectText: string) => {
+        deliveredText = injectText;
+        resolveDelivered?.();
+      },
+    };
+
+    const startedAt = Date.now();
+    const output = await handleSprout(context, {
+      task: "Immediately call the mcp__mekiri__harvest tool with result set to exactly the string ASYNC_SPROUT_OK and nothing else.",
+      wait_mode: "async",
+    });
+    const respondedAfterMs = Date.now() - startedAt;
+
+    const parsed = JSON.parse((output.content[0] as { text: string }).text);
+    expect(parsed.status).toBe("ok");
+    expect(parsed.pending).toBe(true);
+    expect(parsed.child_session_id).toBeTruthy();
+    // A real harvest round-trip takes several seconds; returning in under
+    // 2s is the proof this was fire-and-forget, not a disguised await.
+    expect(respondedAfterMs).toBeLessThan(2000);
+
+    await delivered;
+    expect(deliveredText).toContain(parsed.child_session_id);
+    expect(deliveredText).toContain("ASYNC_SPROUT_OK");
+  }, 60_000);
+
+  it("rejects a second concurrent async sprout when parallelism.mode is 'single'", async () => {
+    const dir = process.cwd();
+    let parentSessionId: string | undefined;
+    const asyncSproutLimiter = createAsyncSproutLimiter();
+    const delivered: string[] = [];
+
+    const seed = createInputQueue();
+    seed.push("Reply with exactly one word: ok");
+    seed.close();
+    const seedQuery = query({
+      prompt: seed.iterable,
+      options: buildQueryOptions({ resume: undefined, cwd: dir, mcpServers: {} }),
+    });
+    for await (const message of seedQuery) {
+      if (message.type === "system" && message.subtype === "init") {
+        parentSessionId = message.session_id;
+      }
+    }
+    expect(parentSessionId).toBeTruthy();
+
+    const context = {
+      dir,
+      depth: 0,
+      isClone: false,
+      getSessionId: () => parentSessionId as string,
+      getTranscript: () => [],
+      onSwitch: () => {
+        throw new Error("parent should not prune itself in this test");
+      },
+      onHarvest: () => {
+        throw new Error("parent should never receive a harvest call directly");
+      },
+      asyncSproutLimiter,
+      onAsyncSproutComplete: (injectText: string) => {
+        delivered.push(injectText);
+      },
+    };
+
+    const first = await handleSprout(context, {
+      task: "Immediately call the mcp__mekiri__harvest tool with result set to exactly the string FIRST_OK and nothing else.",
+      wait_mode: "async",
+    });
+    const firstParsed = JSON.parse((first.content[0] as { text: string }).text);
+    expect(firstParsed.pending).toBe(true);
+
+    const second = await handleSprout(context, {
+      task: "irrelevant -- this should be rejected before any work starts",
+      wait_mode: "async",
+    });
+    const secondParsed = JSON.parse((second.content[0] as { text: string }).text);
+    expect(secondParsed.status).toBe("parallelism_limit_exceeded");
+    expect(secondParsed.limit).toBe(1);
   }, 60_000);
 });
