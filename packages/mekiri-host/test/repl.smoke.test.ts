@@ -3,7 +3,7 @@ import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { SessionStartHookInput } from "@anthropic-ai/claude-agent-sdk";
+import type { UserPromptSubmitHookInput } from "@anthropic-ai/claude-agent-sdk";
 import { createInputQueue } from "../src/inputQueue.js";
 import { createMekiriTools, handleSprout } from "../src/tools.js";
 import { canUseTool, buildQueryOptions, formatQueryErrorMessage, MEKIRI_SYSTEM_PROMPT } from "../src/permissions.js";
@@ -183,7 +183,7 @@ describe("buildQueryOptions", () => {
     expect(options.systemPrompt).toBe(MEKIRI_SYSTEM_PROMPT);
   });
 
-  it("wires a SessionStart hook that surfaces the mekiri-tuning signal from the real audit log at cwd", async () => {
+  it("wires a UserPromptSubmit hook that surfaces the mekiri-tuning signal from the real audit log at cwd, once", async () => {
     const projectDir = await mkdtemp(path.join(tmpdir(), "mekiri-host-hook-wiring-"));
     try {
       await mkdir(path.join(projectDir, ".mekiri"), { recursive: true });
@@ -197,17 +197,23 @@ describe("buildQueryOptions", () => {
         mcpServers: { mekiri: {} as never },
       });
 
-      expect(options.hooks?.SessionStart).toHaveLength(1);
-      const hook = options.hooks?.SessionStart?.[0].hooks[0];
+      expect(options.hooks?.UserPromptSubmit).toHaveLength(1);
+      const hook = options.hooks?.UserPromptSubmit?.[0].hooks[0];
       expect(hook).toBeTypeOf("function");
 
-      const output = await hook!({} as SessionStartHookInput, undefined, { signal: new AbortController().signal });
-      expect(output).toEqual({
+      const dummyInput = {} as UserPromptSubmitHookInput;
+      const dummyOptions = { signal: new AbortController().signal };
+
+      const firstOutput = await hook!(dummyInput, undefined, dummyOptions);
+      expect(firstOutput).toEqual({
         hookSpecificOutput: {
-          hookEventName: "SessionStart",
+          hookEventName: "UserPromptSubmit",
           additionalContext: expect.stringContaining("Distillation Ratio"),
         },
       });
+
+      const secondOutput = await hook!(dummyInput, undefined, dummyOptions);
+      expect(secondOutput).toEqual({});
     } finally {
       await rm(projectDir, { recursive: true, force: true });
     }

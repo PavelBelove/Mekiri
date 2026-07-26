@@ -77,16 +77,34 @@ This host currently only auto-approves Mekiri's own tools and read-only
 tools (Read/Grep/Glob); Bash, Edit, Write, and any other MCP tool are
 denied.`;
 
-// Session-start hook: mekiri-tuning's Trigger B (see tuningSignal.ts)
+// First-user-prompt hook: mekiri-tuning's Trigger B (see tuningSignal.ts)
 // currently relies entirely on the agent remembering to check
-// .mekiri/audit.jsonl. This closes that gap with live computation at every
-// session start (parent and clone alike -- the audit log is shared)
-// instead of duplicating MEKIRI_SYSTEM_PROMPT's static text, which is the
-// one thing a static system prompt cannot do. Constructed fresh inside
-// buildQueryOptions() (not module-scope) so it always reads the right
-// project's dir, never a captured stale one.
-function createSessionStartHook(dir: string): HookCallback {
+// .mekiri/audit.jsonl. This closes that gap with live computation at the
+// first prompt of every query() instance (parent and clone alike -- the
+// audit log is shared) instead of duplicating MEKIRI_SYSTEM_PROMPT's static
+// text, which is the one thing a static system prompt cannot do.
+//
+// Uses UserPromptSubmit, not SessionStart: SessionStart/SessionEnd hooks
+// passed via Options.hooks are confirmed broken upstream as of SDK 0.3.218 /
+// CLI 2.1.218 (anthropics/claude-agent-sdk-typescript#83) -- they are never
+// invoked in a live session, verified by direct repro outside this
+// codebase. UserPromptSubmit fires correctly in the same repro harness and
+// supports the same additionalContext mechanism.
+//
+// The hasChecked flag makes this fire at most once per query() instance
+// (constructed fresh inside buildQueryOptions(), not module-scope, so both
+// the flag and dir are correctly scoped to one query() lifetime -- in
+// repl.ts that spans one "session segment" until the next prune-triggered
+// switch, which is close enough to "once per session" for this purpose).
+// Without the flag this would recompute and re-inject on every single user
+// message for the rest of the session, which is not the intent.
+function createFirstPromptTuningSignalHook(dir: string): HookCallback {
+  let hasChecked = false;
   return async () => {
+    if (hasChecked) {
+      return {};
+    }
+    hasChecked = true;
     const entries = await readAuditLog(dir);
     const additionalContext = computeTuningSignalContext(entries);
     if (additionalContext === undefined) {
@@ -94,7 +112,7 @@ function createSessionStartHook(dir: string): HookCallback {
     }
     return {
       hookSpecificOutput: {
-        hookEventName: "SessionStart",
+        hookEventName: "UserPromptSubmit",
         additionalContext,
       },
     };
@@ -136,6 +154,6 @@ export function buildQueryOptions(context: {
     canUseTool,
     plugins: [{ type: "local", path: SKILLS_PLUGIN_PATH }],
     systemPrompt: MEKIRI_SYSTEM_PROMPT,
-    hooks: { SessionStart: [{ hooks: [createSessionStartHook(context.cwd)] }] },
+    hooks: { UserPromptSubmit: [{ hooks: [createFirstPromptTuningSignalHook(context.cwd)] }] },
   };
 }
