@@ -582,3 +582,50 @@ describe("mekiri-host live smoke test: system prompt steers dispatch behavior", 
     }
   }, 60_000);
 });
+
+// Real, billed proof that the UserPromptSubmit hook's additionalContext
+// genuinely reaches and is used by the model in a live session. Does NOT
+// check for an SDKHookResponseMessage -- confirmed architecturally absent
+// for in-process JS callback hooks by decompiling the bundled CLI (design
+// spec §3.2). Instead asks the model to report what's already in its own
+// context (without hinting at the answer) and checks its real response --
+// the same technique that first proved this live with a marker phrase, and
+// the same behavioral-proof pattern already used in the system-prompt
+// plan's "steers dispatch behavior" test.
+describe("mekiri-host live smoke test: UserPromptSubmit hook delivers the mekiri-tuning signal", () => {
+  it("a real session's assistant response reflects the tuning signal injected via additionalContext", async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), "mekiri-host-hook-live-"));
+    try {
+      await mkdir(path.join(projectDir, ".mekiri"), { recursive: true });
+      const lowRatioEntry = { event: "prune", timestamp: "2026-07-26T00:00:00.000Z", sessionId: "s1", newSessionId: "s2", noteType: "portal", removedBranchLength: 100, fruitLength: 80 };
+      const lines = [lowRatioEntry, lowRatioEntry, lowRatioEntry].map((entry) => JSON.stringify(entry)).join("\n");
+      await writeFile(path.join(projectDir, ".mekiri", "audit.jsonl"), `${lines}\n`, "utf8");
+
+      const { iterable, push, close } = createInputQueue();
+      push(
+        [
+          "Before doing anything else: state in one sentence whether you currently have any pending Mekiri tuning-related signal already present in your context (injected automatically -- not something you need to check any file for), and if so, quote it verbatim.",
+          "Do not call any tools.",
+        ].join("\n"),
+      );
+      close();
+
+      const blocks: unknown[] = [];
+
+      const q = query({
+        prompt: iterable,
+        options: buildQueryOptions({ resume: undefined, cwd: projectDir, mcpServers: {} }),
+      });
+      for await (const message of q) {
+        if (message.type === "assistant") {
+          blocks.push(...message.message.content);
+        }
+      }
+
+      const combined = JSON.stringify(blocks);
+      expect(combined).toContain("Distillation Ratio");
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
