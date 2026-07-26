@@ -27,25 +27,32 @@
 
 Trigger A (явный приоритет пользователя) и внутрисессионный сигнал `depth_limit_exceeded` хуком не автоматизируются — оба принципиально не вычислимы на старте сессии из `audit.jsonl` (Trigger A — живое высказывание в разговоре; `depth_limit_exceeded` не пишется в лог вообще, см. `tools.ts:153-155`). Остаются как есть — на суждении агента.
 
-## 3. Механизм (проверено по sdk.d.ts)
+## 3. Механизм (проверено по sdk.d.ts, пересмотрено после апстрим-бага — см. §3.1)
 
-- `Options.hooks?.SessionStart: HookCallbackMatcher[]`, каждый элемент — `{hooks: HookCallback[]}`.
+- `Options.hooks?.UserPromptSubmit: HookCallbackMatcher[]`, каждый элемент — `{hooks: HookCallback[]}`.
 - `HookCallback = (input: HookInput, toolUseID, {signal}) => Promise<HookJSONOutput>`.
-- Возврат: `{hookSpecificOutput: {hookEventName: 'SessionStart', additionalContext: string}}` — тот же механизм, что вставил блок «You have superpowers» в начало этой самой CLI-сессии.
-- Наблюдаемо в потоке сообщений: `SDKHookResponseMessage {type:'system', subtype:'hook_response', hook_event:'SessionStart', output}` — можно проверить живым тестом без полного хода модели, просто поймав это сообщение и остановившись (по аналогии с тем, как уже проверялось `system/init` в предыдущей итерации).
-- `source: 'startup'|'resume'|'clear'|'compact'|'fork'` в `SessionStartHookInput` — хук намеренно не фильтрует по `source`: сигнал должен всплывать одинаково при любом старте, включая клонов (`fork`) и после компакта.
+- Возврат: `{hookSpecificOutput: {hookEventName: 'UserPromptSubmit', additionalContext: string}}` — тот же приём (`additionalContext`), что вставил блок «You have superpowers» в начало этой самой CLI-сессии, просто на другом событии.
+- Наблюдаемо в потоке сообщений: `SDKHookResponseMessage {type:'system', subtype:'hook_response', hook_event:'UserPromptSubmit', output}`.
+- Хук держит замыкание с флагом «уже проверено» (`let hasChecked = false`) и вычисляет сигнал только на первый вызов за время жизни своего `query()`-инстанса — на все последующие `UserPromptSubmit` в той же сессии сразу возвращает `{}`, не перечитывая лог и не спамя повторно тем же сигналом.
+
+### 3.1. Почему не `SessionStart` (первоначальный план)
+
+Первая попытка (2026-07-26, Task 3 implementation) использовала `Options.hooks.SessionStart` — концептуально более точное событие («на старте сессии»), но обнаружился **подтверждённый апстрим-баг**: `@anthropic-ai/claude-agent-sdk` (`0.3.218`, CLI `2.1.218`) никогда не вызывает `SessionStart`/`SessionEnd`-хуки, переданные программно через `Options.hooks` — работает только декларативный `.claude/settings.json`-хук (`type:"command"`, внешний shell-процесс, принципиально другой механизм). Подтверждено независимыми репро-скриптами вне vitest (обёрнутый хук ни разу не вызван SDK) и `debugFile`-трейсом самого CLI (регистрация `SessionStart`-хука вообще не происходит). Тот же репро подтвердил, что `UserPromptSubmit`-хуки в целом работают штатно — баг специфичен для `SessionStart`/`SessionEnd`. Апстрим-issue: `anthropics/claude-agent-sdk-typescript#83` (ссылается на `#30`).
+
+**Семантика `UserPromptSubmit` вместо `SessionStart`:** срабатывает не на самом старте процесса, а на первом промпте — для родителя (`repl.ts`) это первая реплика пользователя в новом `query()`-инстансе (который живёт до следующего `prune`-переключения, т.е. фактически «на сегмент сессии», как и задумывалось), для клона (`clone.ts`) — framedTask-обёрнутая задача от `sprout`. Разница с исходным планом непринципиальна для цели (проактивно подсветить сигнал в начале работы), только раньше срабатывало до первого промпта, теперь — вместе с ним.
 
 ## 4. Структура файлов
 
 - **Новый `packages/mekiri-host/src/tuningSignal.ts`** — чистая функция `computeTuningSignalContext(entries: AuditEntry[]): string | undefined`. Без SDK-типов, без I/O — принимает уже прочитанный массив записей, легко unit-тестируется на синтетических данных без временных файлов и без query().
-- **`packages/mekiri-host/src/permissions.ts`** — тонкая фабрика `createSessionStartHook(dir: string): HookCallback`, которая читает `audit.jsonl` (`readAuditLog` из `mekiri-core`) и передаёт результат в `computeTuningSignalContext`. `buildQueryOptions()` получает `hooks: {SessionStart: [{hooks: [createSessionStartHook(context.cwd)]}]}` — фабрика вызывается заново на каждый вызов `buildQueryOptions`, поэтому хук всегда читает лог актуального `context.cwd`, а не захватывает устаревшее значение.
+- **`packages/mekiri-host/src/permissions.ts`** — тонкая фабрика `createFirstPromptTuningSignalHook(dir: string): HookCallback`, которая читает `audit.jsonl` (`readAuditLog` из `mekiri-core`) и передаёт результат в `computeTuningSignalContext`, с локальным флагом «уже проверено» (§3). `buildQueryOptions()` получает `hooks: {UserPromptSubmit: [{hooks: [createFirstPromptTuningSignalHook(context.cwd)]}]}` — фабрика вызывается заново на каждый вызов `buildQueryOptions`, поэтому и флаг, и `dir` всегда свежие для конкретного `query()`-инстанса, не захватывают устаревшее значение.
 
 Пороговые константы (2×, ≥3, ≥2) объявляются один раз в `tuningSignal.ts` с комментарием, что они обязаны совпадать с числами, зафиксированными прозой в скилле `mekiri-tuning` — полного DRY через границу код/markdown нет, но явная перекрёстная ссылка в комментарии — практическая мера против рассинхрона (тот же паттерн, что уже используется в комментарии над `MEKIRI_SYSTEM_PROMPT`).
 
 ## 5. Тестирование
 
 - **Unit-тесты `computeTuningSignalContext`** на синтетических массивах `AuditEntry[]`: нет сигнала (мало записей или высокие метрики) → `undefined`; DR-сигнал (≥3 подряд `prune`, среднее <2×) → непустая строка с числами; BC-сигнал аналогично; сигнал подавлен, если после него есть `configure_mekiri`-запись (anti-nag).
-- **Живой smoke-тест wiring:** реальная сессия с заранее подготовленным во временном каталоге «плохим» `audit.jsonl` (синтетические записи с низким DR), проверка, что среди сообщений потока реально встречается `hook_response` с `hook_event: 'SessionStart'` и `output`, содержащим ожидаемые цифры. Ловим сообщение и завершаем поток сразу — не платим за полный ход модели, аналогично тому, как уже проверялось обнаружение скиллов в предыдущей итерации.
+- **Живой smoke-тест wiring:** реальная сессия с заранее подготовленным во временном каталоге «плохим» `audit.jsonl` (синтетические записи с низким DR), один реальный промпт, проверка, что среди сообщений потока реально встречается `hook_response` с `hook_event: 'UserPromptSubmit'` и `output`, содержащим ожидаемые цифры. Ловим сообщение и завершаем поток сразу, не дожидаясь полного ответа модели.
+- **Unit-тест «срабатывает один раз»:** прямой вызов хука дважды подряд с одним и тем же «плохим» `audit.jsonl` — второй вызов должен вернуть `{}`, а не повторно вычисленный сигнал, подтверждая, что флаг «уже проверено» в замыкании реально работает.
 
 ## 6. Вне скоупа
 
