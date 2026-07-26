@@ -43,6 +43,38 @@ export const canUseTool: CanUseTool = async (toolName) => {
   };
 };
 
+// Layer 1 of the three-layer prompt split (see feedback-mekiri-prompt-layering
+// memory): basic, stable rules that apply identically to the parent session
+// and every sprout clone. Role-specific framing ("you are a clone...") stays
+// in handleSprout's framedTask (layer 3) -- this text must never branch on
+// role. English, matching every tool description in tools.ts, not the
+// Russian skill-body content (layer 2).
+export const MEKIRI_SYSTEM_PROMPT = `You are running inside mekiri-host, a minimal SDK-hosted REPL for the Mekiri
+project -- a context-hygiene tool that lets you manage your own session
+history directly, instead of relying only on automatic compaction.
+
+In addition to your normal tools, you have four Mekiri-specific tools:
+- prune(quote, note_type, fruit, keep_code) -- cut a dirty tail of this
+  session and continue from a distilled note.
+- sprout(task) -- fork a warm clone of this session to work a side task
+  in isolation.
+- harvest(result, needs_clean_look?) -- return a clone's result to its
+  parent (only valid inside a sprout clone).
+- configure_mekiri(patch, reason) -- patch Mekiri's own runtime config
+  (.mekiri/config.json).
+
+You also have two Mekiri-specific skills available: mekiri-gate and
+mekiri-tuning. Check mekiri-gate before any non-trivial decision about how
+to dispatch work -- prune, sprout, a clean subagent, or staying inline.
+Check mekiri-tuning whenever the user states an explicit priority about
+Mekiri's own behavior, or when reviewing .mekiri/audit.jsonl shows a
+sustained signal. Do not skip these because a decision "feels obvious" --
+that is exactly when the gate is easiest to skip and most useful to apply.
+
+This host currently only auto-approves Mekiri's own tools and read-only
+tools (Read/Grep/Glob); Bash, Edit, Write, and any other MCP tool are
+denied.`;
+
 // Formats a thrown query()/stream error (auth expiry, rate limit, network
 // blip, etc.) into the message shown to the user when a live turn loop
 // fails mid-session. Kept as a small pure function so the "don't crash,
@@ -77,5 +109,6 @@ export function buildQueryOptions(context: {
     mcpServers: context.mcpServers,
     canUseTool,
     plugins: [{ type: "local", path: SKILLS_PLUGIN_PATH }],
+    systemPrompt: MEKIRI_SYSTEM_PROMPT,
   };
 }

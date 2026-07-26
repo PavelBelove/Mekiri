@@ -5,7 +5,7 @@ import path from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createInputQueue } from "../src/inputQueue.js";
 import { createMekiriTools, handleSprout } from "../src/tools.js";
-import { canUseTool, buildQueryOptions, formatQueryErrorMessage } from "../src/permissions.js";
+import { canUseTool, buildQueryOptions, formatQueryErrorMessage, MEKIRI_SYSTEM_PROMPT } from "../src/permissions.js";
 import { writeSessionFile, copyRealCredentials } from "./helpers/sessionFile.js";
 import { loadConfig, readAuditLog } from "mekiri-core";
 import type { RawLine } from "mekiri-core";
@@ -171,6 +171,15 @@ describe("buildQueryOptions", () => {
       mcpServers: { mekiri: {} as never },
     });
     expect(options.plugins).toEqual([{ type: "local", path: expect.stringContaining("skills-plugin") }]);
+  });
+
+  it("wires the Mekiri system prompt into the options object", () => {
+    const options = buildQueryOptions({
+      resume: undefined,
+      cwd: "/tmp/does-not-matter",
+      mcpServers: { mekiri: {} as never },
+    });
+    expect(options.systemPrompt).toBe(MEKIRI_SYSTEM_PROMPT);
   });
 });
 
