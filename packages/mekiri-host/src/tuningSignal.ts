@@ -24,17 +24,27 @@ export function computeTuningSignalContext(entries: AuditEntry[]): string | unde
   const lastConfigureIndex = entries.map((entry) => entry.event).lastIndexOf("configure_mekiri");
   const relevant = lastConfigureIndex === -1 ? entries : entries.slice(lastConfigureIndex + 1);
 
+  // A zero-length fruit/harvest makes distillationRatio/branchCompression divide by
+  // zero (Infinity, or NaN if the numerator is also zero). Those entries are dropped
+  // rather than averaged in: Infinity/NaN would silently make the average non-finite
+  // (never < threshold, so it would just look "healthy" and suppress a real signal
+  // without saying why). A window that only reaches DR_MIN_CONSECUTIVE/BC_MIN_CONSECUTIVE
+  // entries by filtering after the fact is deliberately still treated as "not enough
+  // valid data" (same as too few entries), so a degenerate entry can't be silently
+  // skipped past to let an older entry slide into the window in its place.
   const recentPruneRatios = relevant
     .filter((entry): entry is PruneAuditEntry => entry.event === "prune")
     .slice(-DR_MIN_CONSECUTIVE)
-    .map(distillationRatio);
+    .map(distillationRatio)
+    .filter(Number.isFinite);
   const pruneAvg = recentPruneRatios.length === DR_MIN_CONSECUTIVE ? average(recentPruneRatios) : undefined;
   const pruneSignal = pruneAvg !== undefined && pruneAvg < DR_THRESHOLD ? pruneAvg : undefined;
 
   const recentSproutRatios = relevant
     .filter((entry): entry is SproutAuditEntry => entry.event === "sprout")
     .slice(-BC_MIN_CONSECUTIVE)
-    .map(branchCompression);
+    .map(branchCompression)
+    .filter(Number.isFinite);
   const sproutAvg = recentSproutRatios.length === BC_MIN_CONSECUTIVE ? average(recentSproutRatios) : undefined;
   const sproutSignal = sproutAvg !== undefined && sproutAvg < BC_THRESHOLD ? sproutAvg : undefined;
 

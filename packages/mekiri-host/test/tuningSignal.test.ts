@@ -93,6 +93,30 @@ describe("computeTuningSignalContext", () => {
     expect(computeTuningSignalContext(entries)).toBeUndefined();
   });
 
+  it("treats a zero-denominator entry in the window as not-enough-valid-data, not as a healthy Infinity ratio", () => {
+    const entries: AuditEntry[] = [
+      pruneEntry(1000, 100), // 10x, healthy
+      pruneEntry(1000, 100), // 10x, healthy
+      pruneEntry(500, 0), // fruitLength: 0 -> ratio is Infinity, a degenerate entry, not a healthy one
+    ];
+    expect(computeTuningSignalContext(entries)).toBeUndefined();
+  });
+
+  it("does not let an older entry slide into the window to replace a degenerate one -- the last 3 raw entries must all be valid", () => {
+    const entries: AuditEntry[] = [
+      pruneEntry(100, 80), // 1.25x, bad, 5th-from-last -- must NOT be pulled in to complete the window
+      pruneEntry(100, 80), // 1.25x, bad, 4th-from-last -- must NOT be pulled in to complete the window
+      pruneEntry(100, 80), // 1.25x, bad, but part of the raw last-3 window
+      pruneEntry(100, 80), // 1.25x, bad, but part of the raw last-3 window
+      pruneEntry(500, 0), // fruitLength: 0 -> degenerate, and the actual last entry
+    ];
+    // A naive "filter out non-finite ratios, then take the last 3" implementation would drop the
+    // degenerate entry and slide the 4th-from-last (also 1.25x) into the window, wrongly averaging
+    // to 1.25x and signaling. The correct fix takes the raw last 3 entries first (two 1.25x entries
+    // plus the degenerate one), filters, gets only 2 valid entries, and reports "not enough data".
+    expect(computeTuningSignalContext(entries)).toBeUndefined();
+  });
+
   it("anti-nag: still signals a NEW low-ratio run that occurs after configure_mekiri", () => {
     const entries: AuditEntry[] = [
       pruneEntry(100, 80),
