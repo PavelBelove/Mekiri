@@ -1,6 +1,8 @@
 import path from "node:path";
 
-import type { CanUseTool, Options } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, HookCallback, Options } from "@anthropic-ai/claude-agent-sdk";
+import { readAuditLog } from "mekiri-core";
+import { computeTuningSignalContext } from "./tuningSignal.js";
 
 // mekiri-host is only responsible for permissioning its own MCP tool(s) —
 // the "mekiri" server registered by createMekiriTools (prune, sprout,
@@ -75,6 +77,30 @@ This host currently only auto-approves Mekiri's own tools and read-only
 tools (Read/Grep/Glob); Bash, Edit, Write, and any other MCP tool are
 denied.`;
 
+// Session-start hook: mekiri-tuning's Trigger B (see tuningSignal.ts)
+// currently relies entirely on the agent remembering to check
+// .mekiri/audit.jsonl. This closes that gap with live computation at every
+// session start (parent and clone alike -- the audit log is shared)
+// instead of duplicating MEKIRI_SYSTEM_PROMPT's static text, which is the
+// one thing a static system prompt cannot do. Constructed fresh inside
+// buildQueryOptions() (not module-scope) so it always reads the right
+// project's dir, never a captured stale one.
+function createSessionStartHook(dir: string): HookCallback {
+  return async () => {
+    const entries = await readAuditLog(dir);
+    const additionalContext = computeTuningSignalContext(entries);
+    if (additionalContext === undefined) {
+      return {};
+    }
+    return {
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext,
+      },
+    };
+  };
+}
+
 // Formats a thrown query()/stream error (auth expiry, rate limit, network
 // blip, etc.) into the message shown to the user when a live turn loop
 // fails mid-session. Kept as a small pure function so the "don't crash,
@@ -110,5 +136,6 @@ export function buildQueryOptions(context: {
     canUseTool,
     plugins: [{ type: "local", path: SKILLS_PLUGIN_PATH }],
     systemPrompt: MEKIRI_SYSTEM_PROMPT,
+    hooks: { SessionStart: [{ hooks: [createSessionStartHook(context.cwd)] }] },
   };
 }

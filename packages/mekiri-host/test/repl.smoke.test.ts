@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import type { SessionStartHookInput } from "@anthropic-ai/claude-agent-sdk";
 import { createInputQueue } from "../src/inputQueue.js";
 import { createMekiriTools, handleSprout } from "../src/tools.js";
 import { canUseTool, buildQueryOptions, formatQueryErrorMessage, MEKIRI_SYSTEM_PROMPT } from "../src/permissions.js";
@@ -180,6 +181,36 @@ describe("buildQueryOptions", () => {
       mcpServers: { mekiri: {} as never },
     });
     expect(options.systemPrompt).toBe(MEKIRI_SYSTEM_PROMPT);
+  });
+
+  it("wires a SessionStart hook that surfaces the mekiri-tuning signal from the real audit log at cwd", async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), "mekiri-host-hook-wiring-"));
+    try {
+      await mkdir(path.join(projectDir, ".mekiri"), { recursive: true });
+      const lowRatioEntry = { event: "prune", timestamp: "2026-07-26T00:00:00.000Z", sessionId: "s1", newSessionId: "s2", noteType: "portal", removedBranchLength: 100, fruitLength: 80 };
+      const lines = [lowRatioEntry, lowRatioEntry, lowRatioEntry].map((entry) => JSON.stringify(entry)).join("\n");
+      await writeFile(path.join(projectDir, ".mekiri", "audit.jsonl"), `${lines}\n`, "utf8");
+
+      const options = buildQueryOptions({
+        resume: undefined,
+        cwd: projectDir,
+        mcpServers: { mekiri: {} as never },
+      });
+
+      expect(options.hooks?.SessionStart).toHaveLength(1);
+      const hook = options.hooks?.SessionStart?.[0].hooks[0];
+      expect(hook).toBeTypeOf("function");
+
+      const output = await hook!({} as SessionStartHookInput, undefined, { signal: new AbortController().signal });
+      expect(output).toEqual({
+        hookSpecificOutput: {
+          hookEventName: "SessionStart",
+          additionalContext: expect.stringContaining("Distillation Ratio"),
+        },
+      });
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
   });
 });
 
