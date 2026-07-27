@@ -26,5 +26,5 @@ export { distillationRatio, branchCompression, lifetimeTokenSavings, contextRecy
 export { sanitizeDir, readSessionTranscript } from "./sessionTranscript.js";
 export { buildSessionForest, findPruneTrunk } from "./sessionTree.js";
 export type { SessionNode, SessionTree } from "./sessionTree.js";
-export { computeSubsequentRequestCount, computeLifetimeTokenSavingsForTree, computeTotalContextProduced } from "./metricsReport.js";
-export type { PruneSavings } from "./metricsReport.js";
+export { computeSubsequentRequestCount, computeLifetimeTokenSavingsForTree, computeTotalContextProduced, computeVirtualContextLifetime } from "./metricsReport.js";
+export type { PruneSavings, VirtualContextLifetimeResult } from "./metricsReport.js";

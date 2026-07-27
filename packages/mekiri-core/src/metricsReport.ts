@@ -1,6 +1,8 @@
 import type { PruneAuditEntry } from "./auditLog.js";
-import { lifetimeTokenSavings } from "./metrics.js";
+import { findLastCompactBoundaryIndex } from "./compactZone.js";
+import { lifetimeTokenSavings, virtualContextLifetime } from "./metrics.js";
 import { readSessionTranscript } from "./sessionTranscript.js";
+import { findPruneTrunk } from "./sessionTree.js";
 import type { SessionTree, SessionNode } from "./sessionTree.js";
 
 async function countUserTurns(dir: string, sessionId: string): Promise<number> {
@@ -66,4 +68,53 @@ export async function computeTotalContextProduced(dir: string, tree: SessionTree
     }),
   );
   return lengths.reduce((sum, l) => sum + l, 0);
+}
+
+export interface VirtualContextLifetimeResult {
+  actualTurn: number;
+  virtualTurn: number;
+  lifetimeExtension: number;
+}
+
+/**
+ * See design spec §4 and this plan's Global Constraints for the full
+ * derivation. Only the trunk tip's own transcript is read -- no
+ * multi-session concatenation needed. priorGarbage (every earlier prune's
+ * removed length along the trunk, excluding the tip itself) is added as a
+ * head start to the virtual cumulative-length walk instead of starting at
+ * 0, which reproduces the same result as a full reconstruction with one
+ * file read instead of N.
+ */
+export async function computeVirtualContextLifetime(dir: string, tree: SessionTree): Promise<VirtualContextLifetimeResult | undefined> {
+  const trunk = findPruneTrunk(tree);
+  const tipSessionId = trunk.length > 0 ? trunk[trunk.length - 1].sessionId : tree.rootSessionId;
+
+  const tipTranscript = await readSessionTranscript(dir, tipSessionId);
+  const actualTurn = findLastCompactBoundaryIndex(tipTranscript);
+  if (actualTurn === -1) {
+    return undefined;
+  }
+
+  // Same length basis as the accumulation loop below (sum of each line's own
+  // JSON.stringify length) -- NOT JSON.stringify(slice).length, which would
+  // add array bracket/comma overhead the per-line walk never accrues and
+  // throw off the equality check by a few bytes.
+  const threshold = tipTranscript.slice(0, actualTurn + 1).reduce((sum, line) => sum + JSON.stringify(line).length, 0);
+  const priorGarbage = trunk.slice(0, -1).reduce((sum, node) => sum + node.removedOrBranchLength, 0);
+
+  let virtualCumulative = priorGarbage;
+  let virtualTurn = tipTranscript.length;
+  for (let i = 0; i < tipTranscript.length; i++) {
+    virtualCumulative += JSON.stringify(tipTranscript[i]).length;
+    if (virtualCumulative >= threshold) {
+      virtualTurn = i;
+      break;
+    }
+  }
+
+  return {
+    actualTurn,
+    virtualTurn,
+    lifetimeExtension: virtualContextLifetime(actualTurn, virtualTurn),
+  };
 }

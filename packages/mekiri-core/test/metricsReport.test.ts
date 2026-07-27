@@ -2,9 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { computeSubsequentRequestCount, computeLifetimeTokenSavingsForTree, computeTotalContextProduced } from "../src/metricsReport.js";
+import { computeSubsequentRequestCount, computeLifetimeTokenSavingsForTree, computeTotalContextProduced, computeVirtualContextLifetime } from "../src/metricsReport.js";
 import { sanitizeDir } from "../src/sessionTranscript.js";
 import { buildSessionForest } from "../src/sessionTree.js";
+import type { SessionTree } from "../src/sessionTree.js";
 import type { AuditEntry, PruneAuditEntry } from "../src/auditLog.js";
 import type { RawLine } from "../src/types.js";
 
@@ -83,5 +84,101 @@ describe("metricsReport (LTS + CRR)", () => {
 
     const total = await computeTotalContextProduced(projectDir, forest[0]);
     expect(total).toBe(expectedTotal);
+  });
+});
+
+function makeLine(uuid: string, isCompactSummary = false): RawLine {
+  return {
+    type: "user",
+    uuid,
+    parentUuid: null,
+    isSidechain: false,
+    isCompactSummary,
+    message: { role: "user", content: `line ${uuid} `.padEnd(50, "x") },
+  };
+}
+
+describe("computeVirtualContextLifetime", () => {
+  let vclConfigDir: string;
+  let originalConfigDir: string | undefined;
+  const vclProjectDir = "/fake/vcl-project";
+
+  beforeEach(async () => {
+    vclConfigDir = await mkdtemp(path.join(tmpdir(), "mekiri-core-vcl-"));
+    originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = vclConfigDir;
+  });
+
+  afterEach(async () => {
+    if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = originalConfigDir;
+    await rm(vclConfigDir, { recursive: true, force: true });
+  });
+
+  async function writeFixtureLines(sessionId: string, lines: RawLine[]): Promise<void> {
+    const dirPath = path.join(vclConfigDir, "projects", sanitizeDir(vclProjectDir));
+    await mkdir(dirPath, { recursive: true });
+    await writeFile(path.join(dirPath, `${sessionId}.jsonl`), lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf8");
+  }
+
+  it("returns undefined when the trunk tip never compacted", async () => {
+    await writeFixtureLines("root", [makeLine("u0"), makeLine("u1")]); // no compact marker anywhere
+    const tree: SessionTree = { rootSessionId: "root", nodes: [] };
+
+    const result = await computeVirtualContextLifetime(vclProjectDir, tree);
+    expect(result).toBeUndefined();
+  });
+
+  it("virtualTurn equals actualTurn when the trunk was never pruned (0% extension)", async () => {
+    await writeFixtureLines("root", [makeLine("u0"), makeLine("u1", true), makeLine("u2")]);
+    const tree: SessionTree = { rootSessionId: "root", nodes: [] };
+
+    const result = await computeVirtualContextLifetime(vclProjectDir, tree);
+    expect(result).toBeDefined();
+    expect(result?.actualTurn).toBe(1);
+    expect(result?.virtualTurn).toBe(1);
+    expect(result?.lifetimeExtension).toBe(0);
+  });
+
+  it("reproduces tz.md's own worked pattern: no prior garbage means virtualTurn === actualTurn even with one trunk node", async () => {
+    const lines: RawLine[] = [makeLine("u0"), makeLine("u1"), makeLine("u2"), makeLine("u3", true), makeLine("u4")];
+    await writeFixtureLines("tip", lines);
+
+    const threshold = JSON.stringify(lines.slice(0, 4)).length; // cumulative length through index 3
+    const tree: SessionTree = {
+      rootSessionId: "root",
+      nodes: [
+        { sessionId: "tip", parentSessionId: "root", branchType: "prune", timestamp: "t", removedOrBranchLength: threshold, fruitOrHarvestLength: 1 },
+      ],
+    };
+
+    const result = await computeVirtualContextLifetime(vclProjectDir, tree);
+    expect(result).toBeDefined();
+    expect(result?.actualTurn).toBe(3);
+    // priorGarbage here is 0 (trunk.slice(0,-1) is empty -- "tip" IS the only/last trunk node),
+    // so this specific tree has no prior garbage and virtualTurn === actualTurn.
+    expect(result?.virtualTurn).toBe(3);
+    expect(result?.lifetimeExtension).toBe(0);
+  });
+
+  it("a real prior prune (two trunk nodes) pulls virtualTurn earlier than actualTurn", async () => {
+    const lines: RawLine[] = [makeLine("u0"), makeLine("u1"), makeLine("u2", true), makeLine("u3")];
+    await writeFixtureLines("tip", lines);
+
+    const tree: SessionTree = {
+      rootSessionId: "root",
+      nodes: [
+        { sessionId: "mid", parentSessionId: "root", branchType: "prune", timestamp: "t1", removedOrBranchLength: 10_000, fruitOrHarvestLength: 1 },
+        { sessionId: "tip", parentSessionId: "mid", branchType: "prune", timestamp: "t2", removedOrBranchLength: 1, fruitOrHarvestLength: 1 },
+      ],
+    };
+
+    const result = await computeVirtualContextLifetime(vclProjectDir, tree);
+    expect(result).toBeDefined();
+    expect(result?.actualTurn).toBe(2);
+    // priorGarbage = 10_000 (the "mid" node's removal, "tip" itself excluded)
+    // is large enough to guarantee the threshold is crossed at index 0.
+    expect(result?.virtualTurn).toBe(0);
+    expect(result?.lifetimeExtension).toBeGreaterThan(0);
   });
 });
