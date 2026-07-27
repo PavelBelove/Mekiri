@@ -38,7 +38,7 @@ describe("createLiveTranscript", () => {
     transcript.push(fakeAssistantMessage("11111111-1111-4111-8111-111111111111", "Reading the logs now to find the root cause."));
 
     const boundary = findBoundary(transcript.getLines(), "Reading the logs now");
-    expect(boundary).toEqual({ status: "ok", uuid: "11111111-1111-4111-8111-111111111111" });
+    expect(boundary).toEqual({ status: "ok", messageId: "11111111-1111-4111-8111-111111111111" });
   });
 
   it("translates a compact boundary message into a two-line pair findLastCompactBoundaryIndex recognizes", () => {
@@ -48,10 +48,10 @@ describe("createLiveTranscript", () => {
     transcript.push(fakeAssistantMessage("44444444-4444-4444-8444-444444444444", "After the compaction, fresh work begins."));
 
     const boundary = findBoundary(transcript.getLines(), "Before the compaction, this text appears");
-    expect(boundary).toEqual({ status: "in_compacted_zone", lastCompactUuid: "33333333-3333-4333-8333-333333333333" });
+    expect(boundary).toEqual({ status: "in_compacted_zone", lastCompactMessageId: "33333333-3333-4333-8333-333333333333" });
 
     const freshBoundary = findBoundary(transcript.getLines(), "After the compaction, fresh work begins");
-    expect(freshBoundary).toEqual({ status: "ok", uuid: "44444444-4444-4444-8444-444444444444" });
+    expect(freshBoundary).toEqual({ status: "ok", messageId: "44444444-4444-4444-8444-444444444444" });
   });
 
   it("ignores message types that carry no searchable text (e.g. a bare system init message)", () => {

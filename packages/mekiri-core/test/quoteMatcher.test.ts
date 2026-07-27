@@ -21,7 +21,7 @@ describe("findBoundary", () => {
     const lines: RawLine[] = [u1, a1, a2];
 
     const result = findBoundary(lines, "Reading the 7000 lines of CI logs");
-    expect(result).toEqual({ status: "ok", uuid: a1.uuid });
+    expect(result).toEqual({ status: "ok", messageId: a1.uuid });
   });
 
   it("returns not_found when the quote appears nowhere", () => {
@@ -63,7 +63,7 @@ describe("findBoundary", () => {
     const lines: RawLine[] = [u1, a1, system, summary, a2];
 
     const result = findBoundary(lines, "This sentence lives before the compaction");
-    expect(result).toEqual({ status: "in_compacted_zone", lastCompactUuid: summary.uuid });
+    expect(result).toEqual({ status: "in_compacted_zone", lastCompactMessageId: summary.uuid });
   });
 
   it("only searches after the last compact boundary when one exists", () => {
@@ -74,6 +74,6 @@ describe("findBoundary", () => {
     const lines: RawLine[] = [u1, a1, system, summary, a2];
 
     const result = findBoundary(lines, "Shared phrase appears here too");
-    expect(result).toEqual({ status: "ok", uuid: a2.uuid });
+    expect(result).toEqual({ status: "ok", messageId: a2.uuid });
   });
 });

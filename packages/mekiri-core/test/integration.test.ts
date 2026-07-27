@@ -81,7 +81,7 @@ describe("mekiri-core end-to-end: read dirty logs, then prune(portal)", () => {
       branchType: "prune",
       sessionId: PARENT_SESSION_ID,
       dir: projectDir,
-      upToMessageId: boundary.uuid,
+      upToMessageId: boundary.messageId,
       noteType: "portal",
       removedBranchLength,
       fruitLength,

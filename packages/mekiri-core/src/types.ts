@@ -41,7 +41,7 @@ export interface RawLine {
 }
 
 export type BoundaryResult =
-  | { status: "ok"; uuid: string }
+  | { status: "ok"; messageId: string }
   | { status: "not_found" }
   | { status: "ambiguous"; occurrences: number }
-  | { status: "in_compacted_zone"; lastCompactUuid: string };
+  | { status: "in_compacted_zone"; lastCompactMessageId: string };

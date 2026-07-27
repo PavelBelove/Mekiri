@@ -21,7 +21,7 @@ export function findBoundary(lines: RawLine[], quote: string): BoundaryResult {
   }
 
   if (matches.length === 1) {
-    return { status: "ok", uuid: matches[0] };
+    return { status: "ok", messageId: matches[0] };
   }
   if (matches.length > 1) {
     return { status: "ambiguous", occurrences: matches.length };
@@ -30,7 +30,7 @@ export function findBoundary(lines: RawLine[], quote: string): BoundaryResult {
   if (boundaryIdx >= 0) {
     for (let i = 0; i < searchStart; i++) {
       if (messageContainsQuote(lines[i], quote)) {
-        return { status: "in_compacted_zone", lastCompactUuid: lines[boundaryIdx].uuid ?? "" };
+        return { status: "in_compacted_zone", lastCompactMessageId: lines[boundaryIdx].uuid ?? "" };
       }
     }
   }

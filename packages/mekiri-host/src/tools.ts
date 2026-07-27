@@ -91,7 +91,7 @@ export async function handlePrune(context: MekiriToolsContext, args: PruneArgs):
     return { content: [{ type: "text", text: JSON.stringify(boundary) }] };
   }
 
-  const boundaryIndex = transcript.findIndex((line) => line.uuid === boundary.uuid);
+  const boundaryIndex = transcript.findIndex((line) => line.uuid === boundary.messageId);
   const removedLines = boundaryIndex >= 0 ? transcript.slice(boundaryIndex + 1) : [];
   const removedBranchLength = JSON.stringify(removedLines).length;
   const fruitLength = JSON.stringify(validation.fruit).length;
@@ -102,7 +102,7 @@ export async function handlePrune(context: MekiriToolsContext, args: PruneArgs):
       branchType: "prune",
       sessionId: context.getSessionId(),
       dir: context.dir,
-      upToMessageId: boundary.uuid,
+      upToMessageId: boundary.messageId,
       noteType: args.note_type,
       removedBranchLength,
       fruitLength,
