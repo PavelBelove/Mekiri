@@ -414,6 +414,10 @@ describe("mekiri-host live smoke test: sprout/harvest end-to-end from the parent
         getTranscript: () => [],
         onSwitch: () => {},
         onHarvest: () => {},
+        asyncSproutLimiter: createAsyncSproutLimiter(),
+        onAsyncSproutComplete: () => {
+          throw new Error("onAsyncSproutComplete should not be called in this test");
+        },
       },
       {
         task:
