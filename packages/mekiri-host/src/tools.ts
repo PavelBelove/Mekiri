@@ -195,7 +195,15 @@ export async function handleSprout(context: MekiriToolsContext, args: SproutArgs
     }
   }
 
-  const { sessionId: forkedSessionId } = await forkSession(context.getSessionId(), { dir: context.dir });
+  let forkedSessionId: string;
+  try {
+    ({ sessionId: forkedSessionId } = await forkSession(context.getSessionId(), { dir: context.dir }));
+  } catch (err) {
+    if (waitMode === "async") {
+      context.asyncSproutLimiter.release();
+    }
+    throw err;
+  }
 
   const buildTools = (dynamic: CloneDynamicContext) =>
     createMekiriTools({
@@ -230,15 +238,21 @@ export async function handleSprout(context: MekiriToolsContext, args: SproutArgs
   if (waitMode === "async") {
     runClone(framedTask, forkedSessionId, context.dir, buildTools)
       .then(async (cloneResult) => {
-        const auditEntry: SproutAuditEntry = {
-          event: "sprout",
-          timestamp: new Date().toISOString(),
-          sessionId: context.getSessionId(),
-          childSessionId: forkedSessionId,
-          branchLength: cloneResult.branchLength,
-          harvestLength: JSON.stringify(cloneResult.result).length,
-        };
-        await appendAuditEntry(context.dir, auditEntry);
+        try {
+          const auditEntry: SproutAuditEntry = {
+            event: "sprout",
+            timestamp: new Date().toISOString(),
+            sessionId: context.getSessionId(),
+            childSessionId: forkedSessionId,
+            branchLength: cloneResult.branchLength,
+            harvestLength: JSON.stringify(cloneResult.result).length,
+          };
+          await appendAuditEntry(context.dir, auditEntry);
+        } catch {
+          // Best-effort: an audit-log write failure must never mask a
+          // genuine successful harvest by falling through to the .catch()
+          // below and reporting the clone as failed.
+        }
         context.asyncSproutLimiter.release();
         context.onAsyncSproutComplete(formatAsyncSproutSuccess(forkedSessionId, cloneResult.result));
       })
