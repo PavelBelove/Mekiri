@@ -44,7 +44,11 @@ fi
 
 (
   cd "$MEKIRI_HOST_DIR"
-  nohup bash -c "tail -f '$FIFO' | npx tsx src/index.ts --dir '$PROJECT_DIR'" >> "$LOG" 2>&1 &
+  # $FIFO/$PROJECT_DIR are passed as positional args ($1/$2) after `--`,
+  # never interpolated into the bash -c script string itself -- a value
+  # containing a literal single quote (or any other shell metacharacter)
+  # cannot break out of this, unlike string-concatenation into bash -c.
+  nohup bash -c 'tail -f "$1" | npx tsx src/index.ts --dir "$2"' -- "$FIFO" "$PROJECT_DIR" >> "$LOG" 2>&1 &
   echo $! > "$PIDFILE"
 )
 
