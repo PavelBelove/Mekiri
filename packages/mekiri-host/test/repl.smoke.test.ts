@@ -781,3 +781,92 @@ describe("mekiri-host live smoke test: sprout async wait_mode", () => {
     expect(secondParsed.limit).toBe(1);
   }, 60_000);
 });
+
+// Real, billed proof that the Task 1 hard-gate reflex ("got dirty -> prune,
+// about to get dirty on a subtask -> sprout") actually changes behavior, not
+// just text -- the model gets a task shaped exactly like mekiri-gate's own
+// sprout example (needs the parent's full inherited context, wants
+// isolation, one final report) and is never told which tool to use. This is
+// the complementary "does it actually act" proof to the "system prompt
+// steers dispatch behavior" test above, which explicitly forbids tool calls
+// and only checks narration text.
+describe("mekiri-host live smoke test: hard-gate reflex actually fires sprout, not just narration", () => {
+  it("calls sprout for a task needing full inherited context, without being told which tool to use", async () => {
+    const dir = process.cwd();
+    let parentSessionId: string | undefined;
+
+    const tools = createMekiriTools({
+      dir,
+      depth: 0,
+      isClone: false,
+      backend: createClaudeCodeBackend(),
+      getSessionId: () => {
+        if (!parentSessionId) throw new Error("no parent session id yet");
+        return parentSessionId;
+      },
+      getTranscript: () => [],
+      onSwitch: () => {
+        throw new Error("prune should not be called -- this task doesn't involve a dead end");
+      },
+      onHarvest: () => {
+        throw new Error("harvest should not be called from the parent in this test");
+      },
+      asyncSproutLimiter: createAsyncSproutLimiter(),
+      onAsyncSproutComplete: () => {
+        throw new Error("onAsyncSproutComplete should not be called in this test");
+      },
+    });
+
+    // Establish a real parent session id the same way repl.ts does: run one
+    // trivial turn and read session_id off the system/init message (same
+    // pattern as the existing sprout/harvest end-to-end test above).
+    const seed = createInputQueue();
+    seed.push("Reply with exactly one word: ok");
+    seed.close();
+    const seedQuery = query({
+      prompt: seed.iterable,
+      options: buildQueryOptions({ resume: undefined, cwd: dir, mcpServers: { mekiri: tools } }),
+    });
+    for await (const message of seedQuery) {
+      if (message.type === "system" && message.subtype === "init") {
+        parentSessionId = message.session_id;
+      }
+    }
+    expect(parentSessionId).toBeTruthy();
+
+    // Task shaped exactly like mekiri-gate's own sprout example ("Разберись
+    // с этим багом, пока я продолжаю фичу" -- needs the parent's full
+    // current understanding, wants isolation, one final report) -- not the
+    // "check unrelated docs" example, which the gate's own table assigns to
+    // a clean subagent instead.
+    const { iterable, push, close } = createInputQueue();
+    push(
+      [
+        "Разберись с багом в парсере конфига этого проекта и почини его, используя весь контекст проекта, который у тебя уже есть -- я пока продолжаю параллельно работать над документацией в другом месте и не хочу видеть сам процесс разбора, только финальный результат.",
+        "Реши сам, каким инструментом лучше это сделать, и действуй -- никто не подсказывает тебе конкретный инструмент.",
+      ].join("\n"),
+    );
+    close();
+
+    let sproutCalled = false;
+    const q = query({
+      prompt: iterable,
+      options: buildQueryOptions({ resume: parentSessionId, cwd: dir, mcpServers: { mekiri: tools } }),
+    });
+    for await (const message of q) {
+      if (message.type === "assistant") {
+        for (const block of message.message.content) {
+          if (block.type === "tool_use" && block.name === "mcp__mekiri__sprout") {
+            sproutCalled = true;
+          }
+        }
+      }
+      if (sproutCalled) {
+        await q.return(undefined);
+        break;
+      }
+    }
+
+    expect(sproutCalled).toBe(true);
+  }, 90_000);
+});

@@ -73,6 +73,12 @@ Mekiri's own behavior, or when reviewing .mekiri/audit.jsonl shows a
 sustained signal. Do not skip these because a decision "feels obvious" --
 that is exactly when the gate is easiest to skip and most useful to apply.
 
+HARD RULE, not a suggestion: the moment you notice your own context has
+gotten dirty (a dead end explored, garbage that won't help going forward)
+-- prune. The moment before you are about to make it dirty with a subtask
+-- sprout first, don't do the subtask inline and clean up after. This
+applies even mid-turn, not just at the start of a new task.
+
 This host currently only auto-approves Mekiri's own tools and read-only
 tools (Read/Grep/Glob); Bash, Edit, Write, and any other MCP tool are
 denied.`;
