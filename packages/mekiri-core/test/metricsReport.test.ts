@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { computeSubsequentRequestCount, computeLifetimeTokenSavingsForTree, computeTotalContextProduced, computeVirtualContextLifetime } from "../src/metricsReport.js";
+import { computeSubsequentRequestCount, computeLifetimeTokenSavingsForTree, computeTotalContextProduced, computeVirtualContextLifetime, computeProjectReport } from "../src/metricsReport.js";
 import { sanitizeDir } from "../src/sessionTranscript.js";
 import { buildSessionForest } from "../src/sessionTree.js";
 import type { SessionTree } from "../src/sessionTree.js";
@@ -180,5 +180,56 @@ describe("computeVirtualContextLifetime", () => {
     // is large enough to guarantee the threshold is crossed at index 0.
     expect(result?.virtualTurn).toBe(0);
     expect(result?.lifetimeExtension).toBeGreaterThan(0);
+  });
+});
+
+describe("computeProjectReport", () => {
+  it("returns an empty trees array when there is no audit history", async () => {
+    const emptyProjectDir = await mkdtemp(path.join(tmpdir(), "mekiri-core-empty-project-"));
+    try {
+      const report = await computeProjectReport(emptyProjectDir);
+      expect(report.trees).toEqual([]);
+    } finally {
+      await rm(emptyProjectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("assembles pruneCount/sproutCount/averages from a real audit log", async () => {
+    const { appendAuditEntry } = await import("../src/auditLog.js");
+    const realProjectDir = await mkdtemp(path.join(tmpdir(), "mekiri-core-real-project-"));
+    try {
+      await appendAuditEntry(realProjectDir, {
+        event: "prune",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        sessionId: "root",
+        newSessionId: "a",
+        noteType: "portal",
+        removedBranchLength: 500,
+        fruitLength: 50,
+      });
+
+      const report = await computeProjectReport(realProjectDir);
+      expect(report.trees).toHaveLength(1);
+      expect(report.trees[0].rootSessionId).toBe("root");
+      expect(report.trees[0].pruneCount).toBe(1);
+      expect(report.trees[0].sproutCount).toBe(0);
+      expect(report.trees[0].averageDistillationRatio).toBeCloseTo(500 / 50, 5);
+      expect(report.trees[0].averageBranchCompression).toBeUndefined();
+      // No session files exist anywhere for "root"/"a" in this test's real
+      // filesystem/CLAUDE_CONFIG_DIR -- readSessionTranscript degrades to []
+      // for both, so there's no real transcript data to multiply against
+      // (subsequentRequestCount is 0, so totalLifetimeTokenSavings is 0).
+      // totalContextProduced is NOT 0, though: it's JSON.stringify([]).length
+      // (the 2-character string "[]") summed per node -- 2 nodes ("root",
+      // "a") x 2 chars = 4. This is the correct, literal output for a tree
+      // whose session files are missing, not a sign the computation is
+      // broken. Step 7's live dogfood run is what actually proves the
+      // transcript-backed numbers on real content.
+      expect(report.trees[0].totalLifetimeTokenSavings).toBe(0);
+      expect(report.trees[0].totalContextProduced).toBe(4);
+      expect(report.trees[0].virtualContextLifetime).toBeUndefined();
+    } finally {
+      await rm(realProjectDir, { recursive: true, force: true });
+    }
   });
 });

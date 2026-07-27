@@ -1,8 +1,9 @@
-import type { PruneAuditEntry } from "./auditLog.js";
+import type { AuditEntry, PruneAuditEntry, SproutAuditEntry } from "./auditLog.js";
+import { readAuditLog } from "./auditLog.js";
 import { findLastCompactBoundaryIndex } from "./compactZone.js";
-import { lifetimeTokenSavings, virtualContextLifetime } from "./metrics.js";
+import { distillationRatio, branchCompression, contextRecyclingRatio, lifetimeTokenSavings, virtualContextLifetime } from "./metrics.js";
 import { readSessionTranscript } from "./sessionTranscript.js";
-import { findPruneTrunk } from "./sessionTree.js";
+import { buildSessionForest, findPruneTrunk } from "./sessionTree.js";
 import type { SessionTree, SessionNode } from "./sessionTree.js";
 
 async function countUserTurns(dir: string, sessionId: string): Promise<number> {
@@ -117,4 +118,61 @@ export async function computeVirtualContextLifetime(dir: string, tree: SessionTr
     virtualTurn,
     lifetimeExtension: virtualContextLifetime(actualTurn, virtualTurn),
   };
+}
+
+function average(values: number[]): number {
+  return values.reduce((sum, v) => sum + v, 0) / values.length;
+}
+
+export interface TreeMetricsReport {
+  rootSessionId: string;
+  pruneCount: number;
+  sproutCount: number;
+  averageDistillationRatio: number | undefined;
+  averageBranchCompression: number | undefined;
+  pruneSavings: PruneSavings[];
+  totalLifetimeTokenSavings: number;
+  totalContextProduced: number;
+  contextRecyclingRatio: number;
+  virtualContextLifetime: VirtualContextLifetimeResult | undefined;
+}
+
+export interface ProjectMetricsReport {
+  trees: TreeMetricsReport[];
+}
+
+export async function computeProjectReport(dir: string): Promise<ProjectMetricsReport> {
+  const entries = await readAuditLog(dir);
+  const forest = buildSessionForest(entries);
+
+  const trees: TreeMetricsReport[] = [];
+  for (const tree of forest) {
+    const nodeIds = new Set(tree.nodes.map((n) => n.sessionId));
+    const treeEntries = entries.filter(
+      (e): e is PruneAuditEntry | SproutAuditEntry =>
+        (e.event === "prune" && nodeIds.has(e.newSessionId)) || (e.event === "sprout" && nodeIds.has(e.childSessionId)),
+    );
+    const pruneEntries = treeEntries.filter((e): e is PruneAuditEntry => e.event === "prune");
+    const sproutEntries = treeEntries.filter((e): e is SproutAuditEntry => e.event === "sprout");
+
+    const pruneSavings = await computeLifetimeTokenSavingsForTree(dir, tree, pruneEntries);
+    const totalLifetimeTokenSavings = pruneSavings.reduce((sum, p) => sum + p.savings, 0);
+    const totalContextProduced = await computeTotalContextProduced(dir, tree);
+    const vcl = await computeVirtualContextLifetime(dir, tree);
+
+    trees.push({
+      rootSessionId: tree.rootSessionId,
+      pruneCount: pruneEntries.length,
+      sproutCount: sproutEntries.length,
+      averageDistillationRatio: pruneEntries.length > 0 ? average(pruneEntries.map(distillationRatio)) : undefined,
+      averageBranchCompression: sproutEntries.length > 0 ? average(sproutEntries.map(branchCompression)) : undefined,
+      pruneSavings,
+      totalLifetimeTokenSavings,
+      totalContextProduced,
+      contextRecyclingRatio: totalContextProduced > 0 ? contextRecyclingRatio(treeEntries, totalContextProduced) : 0,
+      virtualContextLifetime: vcl,
+    });
+  }
+
+  return { trees };
 }
