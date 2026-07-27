@@ -870,3 +870,107 @@ describe("mekiri-host live smoke test: hard-gate reflex actually fires sprout, n
     expect(sproutCalled).toBe(true);
   }, 90_000);
 });
+
+describe("mekiri-host live smoke test: rollback economics steers timing, not just whether", () => {
+  it("chooses to finish first and prune postfactum when the fix is within ~2 generations", async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), "mekiri-host-rollback-econ-a-"));
+
+    try {
+      const tools = createMekiriTools({
+        dir: projectDir,
+        depth: 0,
+        isClone: false,
+        backend: createClaudeCodeBackend(),
+        getSessionId: () => "unused-in-this-test",
+        getTranscript: () => [],
+        onSwitch: () => {
+          throw new Error("prune should not be called -- the task explicitly forbids calling any tool, only explaining the choice");
+        },
+        onHarvest: () => {
+          throw new Error("harvest should not be called in this test");
+        },
+        asyncSproutLimiter: createAsyncSproutLimiter(),
+        onAsyncSproutComplete: () => {
+          throw new Error("onAsyncSproutComplete should not be called in this test");
+        },
+      });
+
+      const { iterable, push, close } = createInputQueue();
+      push(
+        [
+          "Ты долго разбирался с багом, перепробовал несколько гипотез, но только что нашёл точную причину -- это буквально одна строка кода, её нужно поправить и дописать один тест, работы на пару ходов, конец уже виден.",
+          "Прежде чем действовать, одним-двумя предложениями объясни, откатишься ли ты прямо сейчас (prune) или сначала доделаешь работу, и почему. Не выполняй саму работу и не вызывай prune/sprout/harvest/configure_mekiri -- просто объясни свой выбор и подожди подтверждения.",
+        ].join("\n"),
+      );
+      close();
+
+      const blocks: unknown[] = [];
+
+      const q = query({
+        prompt: iterable,
+        options: buildQueryOptions({ resume: undefined, cwd: projectDir, mcpServers: { mekiri: tools } }),
+      });
+      for await (const message of q) {
+        if (message.type === "assistant") {
+          blocks.push(...message.message.content);
+        }
+      }
+
+      const combined = JSON.stringify(blocks).toLowerCase();
+      expect(combined).toContain("постфактум");
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("chooses to roll back now when the dead end has no end in sight", async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), "mekiri-host-rollback-econ-b-"));
+
+    try {
+      const tools = createMekiriTools({
+        dir: projectDir,
+        depth: 0,
+        isClone: false,
+        backend: createClaudeCodeBackend(),
+        getSessionId: () => "unused-in-this-test",
+        getTranscript: () => [],
+        onSwitch: () => {
+          throw new Error("prune should not be called -- the task explicitly forbids calling any tool, only explaining the choice");
+        },
+        onHarvest: () => {
+          throw new Error("harvest should not be called in this test");
+        },
+        asyncSproutLimiter: createAsyncSproutLimiter(),
+        onAsyncSproutComplete: () => {
+          throw new Error("onAsyncSproutComplete should not be called in this test");
+        },
+      });
+
+      const { iterable, push, close } = createInputQueue();
+      push(
+        [
+          "Ты уже потратил много ходов на гипотезу про race condition, перепробовал три разных фикса, ни один не сработал, направление явно тупиковое, и непонятно, сколько ещё ходов потребуется, чтобы найти реальную причину.",
+          "Прежде чем действовать, одним-двумя предложениями объясни, откатишься ли ты прямо сейчас (prune) или продолжишь пытаться, и почему. Не выполняй саму работу и не вызывай prune/sprout/harvest/configure_mekiri -- просто объясни свой выбор и подожди подтверждения.",
+        ].join("\n"),
+      );
+      close();
+
+      const blocks: unknown[] = [];
+
+      const q = query({
+        prompt: iterable,
+        options: buildQueryOptions({ resume: undefined, cwd: projectDir, mcpServers: { mekiri: tools } }),
+      });
+      for await (const message of q) {
+        if (message.type === "assistant") {
+          blocks.push(...message.message.content);
+        }
+      }
+
+      const combined = JSON.stringify(blocks).toLowerCase();
+      expect(combined).toContain("prune");
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
