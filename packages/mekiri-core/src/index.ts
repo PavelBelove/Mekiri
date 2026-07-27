@@ -1,6 +1,14 @@
 export const PACKAGE_NAME = "mekiri-core";
 
 export type {
+  SessionId,
+  MessageId,
+  ForkOptions,
+  ForkResult,
+  ExecutionBackend,
+} from "./executionBackend.js";
+export { createClaudeCodeBackend } from "./claudeCodeBackend.js";
+export type {
   NoteType,
   BranchType,
   FileTouched,
