@@ -5,6 +5,7 @@ import path from "node:path";
 import { findBoundary } from "../src/quoteMatcher.js";
 import { validateFruit } from "../src/fruitSchema.js";
 import { createBranch } from "../src/branch.js";
+import { createClaudeCodeBackend } from "../src/claudeCodeBackend.js";
 import { readAuditLog } from "../src/auditLog.js";
 import { distillationRatio } from "../src/metrics.js";
 import { resetUuidCounter, userLine, assistantLine } from "./helpers/buildTranscript.js";
@@ -77,7 +78,8 @@ describe("mekiri-core end-to-end: read dirty logs, then prune(portal)", () => {
     // fruitLength's unit so distillationRatio computes a dimensionally coherent ratio.
     const removedBranchLength = JSON.stringify(a2).length;
 
-    const { newSessionId } = await createBranch({
+    const backend = createClaudeCodeBackend();
+    const { newSessionId } = await createBranch(backend, {
       branchType: "prune",
       sessionId: PARENT_SESSION_ID,
       dir: projectDir,

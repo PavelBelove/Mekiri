@@ -1,5 +1,5 @@
-import { forkSession } from "@anthropic-ai/claude-agent-sdk";
 import type { NoteType } from "./types.js";
+import type { ExecutionBackend } from "./executionBackend.js";
 import { appendAuditEntry } from "./auditLog.js";
 
 interface CreateBranchCommon {
@@ -18,8 +18,8 @@ export interface CreateBranchResult {
   newSessionId: string;
 }
 
-export async function createBranch(args: CreateBranchArgs): Promise<CreateBranchResult> {
-  const result = await forkSession(args.sessionId, {
+export async function createBranch(backend: ExecutionBackend, args: CreateBranchArgs): Promise<CreateBranchResult> {
+  const result = await backend.forkSession(args.sessionId, {
     dir: args.dir,
     upToMessageId: args.branchType === "prune" ? args.upToMessageId : undefined,
   });
@@ -29,7 +29,7 @@ export async function createBranch(args: CreateBranchArgs): Promise<CreateBranch
       event: "prune",
       timestamp: new Date().toISOString(),
       sessionId: args.sessionId,
-      newSessionId: result.sessionId,
+      newSessionId: result.newSessionId,
       noteType: args.noteType,
       removedBranchLength: args.removedBranchLength,
       fruitLength: args.fruitLength,
@@ -39,11 +39,11 @@ export async function createBranch(args: CreateBranchArgs): Promise<CreateBranch
       event: "sprout",
       timestamp: new Date().toISOString(),
       sessionId: args.sessionId,
-      childSessionId: result.sessionId,
+      childSessionId: result.newSessionId,
       branchLength: args.removedBranchLength,
       harvestLength: args.fruitLength,
     });
   }
 
-  return { newSessionId: result.sessionId };
+  return { newSessionId: result.newSessionId };
 }
