@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { tool, createSdkMcpServer, forkSession } from "@anthropic-ai/claude-agent-sdk";
+import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { validateFruit, findBoundary, createBranch, loadConfig, saveConfig, applyConfigPatch, appendAuditEntry } from "mekiri-core";
-import type { RawLine, NoteType, CreateBranchArgs, CreateBranchResult, SproutAuditEntry, ConfigureAuditEntry, MekiriConfig } from "mekiri-core";
+import type { RawLine, NoteType, CreateBranchArgs, CreateBranchResult, SproutAuditEntry, ConfigureAuditEntry, MekiriConfig, ExecutionBackend } from "mekiri-core";
 import { runClone } from "./clone.js";
 import type { CloneDynamicContext } from "./clone.js";
 import type { AsyncSproutLimiter } from "./asyncSproutLimiter.js";
@@ -37,10 +37,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function createBranchWithRetry(args: CreateBranchArgs): Promise<CreateBranchResult> {
+async function createBranchWithRetry(backend: ExecutionBackend, args: CreateBranchArgs): Promise<CreateBranchResult> {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await createBranch(args);
+      return await createBranch(backend, args);
     } catch (err) {
       const attemptsLeft = attempt < FORK_RETRY_DELAYS_MS.length;
       if (!isTransientForkNotFoundError(err) || !attemptsLeft) {
@@ -61,6 +61,7 @@ export interface MekiriToolsContext {
   onHarvest: (result: string, needsCleanLook: boolean) => void;
   asyncSproutLimiter: AsyncSproutLimiter;
   onAsyncSproutComplete: (injectText: string) => void;
+  backend: ExecutionBackend;
 }
 
 export interface PruneArgs {
@@ -98,7 +99,7 @@ export async function handlePrune(context: MekiriToolsContext, args: PruneArgs):
 
   let newSessionId: string;
   try {
-    ({ newSessionId } = await createBranchWithRetry({
+    ({ newSessionId } = await createBranchWithRetry(context.backend, {
       branchType: "prune",
       sessionId: context.getSessionId(),
       dir: context.dir,
@@ -197,7 +198,7 @@ export async function handleSprout(context: MekiriToolsContext, args: SproutArgs
 
   let forkedSessionId: string;
   try {
-    ({ sessionId: forkedSessionId } = await forkSession(context.getSessionId(), { dir: context.dir }));
+    ({ newSessionId: forkedSessionId } = await context.backend.forkSession(context.getSessionId(), { dir: context.dir }));
   } catch (err) {
     if (waitMode === "async") {
       context.asyncSproutLimiter.release();
@@ -214,6 +215,7 @@ export async function handleSprout(context: MekiriToolsContext, args: SproutArgs
       onAsyncSproutComplete: () => {
         throw new Error("mekiri-host: onAsyncSproutComplete should never be invoked from a clone context -- async sprout is parent-only");
       },
+      backend: context.backend,
       ...dynamic,
     });
 

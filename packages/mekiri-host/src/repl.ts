@@ -1,5 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import * as readline from "node:readline";
+import { createClaudeCodeBackend } from "mekiri-core";
 import { createInputQueue } from "./inputQueue.js";
 import { createLiveTranscript } from "./liveTranscript.js";
 import { createMekiriTools } from "./tools.js";
@@ -23,6 +24,7 @@ export async function runRepl(options: ReplOptions): Promise<void> {
   rl.on("line", (line) => currentInput.push(line));
 
   const asyncSproutLimiter = createAsyncSproutLimiter();
+  const backend = createClaudeCodeBackend();
 
   const tools = createMekiriTools({
     dir: options.dir,
@@ -46,6 +48,7 @@ export async function runRepl(options: ReplOptions): Promise<void> {
     onAsyncSproutComplete: (injectText) => {
       currentInput.push(injectText);
     },
+    backend,
   });
 
   let running = true;

@@ -9,7 +9,7 @@ import { createMekiriTools, handleSprout } from "../src/tools.js";
 import { createAsyncSproutLimiter } from "../src/asyncSproutLimiter.js";
 import { canUseTool, buildQueryOptions, formatQueryErrorMessage, MEKIRI_SYSTEM_PROMPT } from "../src/permissions.js";
 import { writeSessionFile, copyRealCredentials } from "./helpers/sessionFile.js";
-import { loadConfig, readAuditLog } from "mekiri-core";
+import { loadConfig, readAuditLog, createClaudeCodeBackend } from "mekiri-core";
 import type { RawLine } from "mekiri-core";
 
 // These tests make real, billed API calls. Keep them to the minimum needed
@@ -293,6 +293,7 @@ describe("mekiri-host live smoke test: prune tool permission wiring", () => {
       dir: projectDir,
       depth: 0,
       isClone: false,
+      backend: createClaudeCodeBackend(),
       getSessionId: () => SESSION_ID,
       getTranscript: () => transcriptLines,
       onSwitch: (newSessionId, injectText) => {
@@ -370,6 +371,7 @@ describe("mekiri-host live smoke test: sprout/harvest end-to-end from the parent
       dir,
       depth: 0,
       isClone: false,
+      backend: createClaudeCodeBackend(),
       getSessionId: () => {
         if (!parentSessionId) throw new Error("no parent session id yet");
         return parentSessionId;
@@ -410,6 +412,7 @@ describe("mekiri-host live smoke test: sprout/harvest end-to-end from the parent
         dir,
         depth: 0,
         isClone: false,
+        backend: createClaudeCodeBackend(),
         getSessionId: () => parentSessionId as string,
         getTranscript: () => [],
         onSwitch: () => {},
@@ -441,6 +444,7 @@ describe("mekiri-host live smoke test: configure_mekiri tool wiring", () => {
         dir: projectDir,
         depth: 0,
         isClone: false,
+        backend: createClaudeCodeBackend(),
         getSessionId: () => "unused-in-this-test",
         getTranscript: () => [],
         onSwitch: () => {
@@ -561,6 +565,7 @@ describe("mekiri-host live smoke test: system prompt steers dispatch behavior", 
         dir: projectDir,
         depth: 0,
         isClone: false,
+        backend: createClaudeCodeBackend(),
         getSessionId: () => "unused-in-this-test",
         getTranscript: () => [],
         onSwitch: () => {
@@ -685,6 +690,7 @@ describe("mekiri-host live smoke test: sprout async wait_mode", () => {
       dir,
       depth: 0,
       isClone: false,
+      backend: createClaudeCodeBackend(),
       getSessionId: () => parentSessionId as string,
       getTranscript: () => [],
       onSwitch: () => {
@@ -744,6 +750,7 @@ describe("mekiri-host live smoke test: sprout async wait_mode", () => {
       dir,
       depth: 0,
       isClone: false,
+      backend: createClaudeCodeBackend(),
       getSessionId: () => parentSessionId as string,
       getTranscript: () => [],
       onSwitch: () => {

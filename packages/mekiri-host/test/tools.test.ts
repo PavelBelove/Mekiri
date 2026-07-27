@@ -13,7 +13,7 @@ import {
 } from "../src/tools.js";
 import type { HarvestArgs, SproutArgs, ConfigureArgs } from "../src/tools.js";
 import type { RawLine } from "mekiri-core";
-import { readAuditLog, loadConfig, defaultConfig } from "mekiri-core";
+import { readAuditLog, loadConfig, defaultConfig, createClaudeCodeBackend } from "mekiri-core";
 import { sanitizeDir, writeSessionFile, copyRealCredentials } from "./helpers/sessionFile.js";
 import { createAsyncSproutLimiter } from "../src/asyncSproutLimiter.js";
 
@@ -56,6 +56,7 @@ describe("handlePrune", () => {
       dir: projectDir,
       depth: 0,
       isClone: false,
+      backend: createClaudeCodeBackend(),
       getSessionId: () => SESSION_ID,
       getTranscript: () => transcriptLines,
       onSwitch: (newSessionId: string, injectText: string) => {
@@ -256,6 +257,7 @@ describe("handleSprout", () => {
       dir: sproutProjectDir,
       depth: 0,
       isClone: false,
+      backend: createClaudeCodeBackend(),
       getSessionId: () => parentSessionId,
       getTranscript: () => [],
       onSwitch: () => {},
