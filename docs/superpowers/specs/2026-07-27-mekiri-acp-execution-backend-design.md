@@ -115,9 +115,17 @@ export async function createBranch(backend: ExecutionBackend, args: CreateBranch
 ```
 Только сигнатура и источник форка меняются; аудит-логика (`appendAuditEntry` вызовы для prune/sprout) не трогается.
 
-### 2.5. `mekiri-host`: один инстанс backend'а
+### 2.5. `mekiri-host`: один инстанс backend'а, и второй прямой вызов SDK, который тоже нужно закрыть
 
-`packages/mekiri-host/src/tools.ts` (или там, где строится `MekiriToolsContext` — уточняется реализующим агентом по факту чтения кода) создаёт один `createClaudeCodeBackend()` и передаёт его в каждый вызов `createBranch`/`createBranchWithRetry` вместо неявного использования SDK внутри `mekiri-core`. Один инстанс на процесс, не пересоздаётся per-call — backend не хранит состояние сессии, так что это не влияет на поведение, просто экономит аллокации.
+Проверка кода нашла: `handleSprout` в `tools.ts` (строка ~200 на момент письма) вызывает SDK-шный `forkSession` **напрямую**, в обход `createBranch` — `createBranch`'ный `branchType: "sprout"` случай в `branch.ts` в продакшене вообще не используется, `handleSprout` форкает сам и сам же пишет `SproutAuditEntry`. Значит если рефакторить только `createBranch`, sprout — один из двух главных примитивов Mekiri — останется жёстко привязан к SDK, и цель Фазы 2 («внутренний интерфейс тулз... в терминах ACP») не будет достигнута для половины тулз. Это меняет объём раздела, не только `branch.ts`:
+
+- `MekiriToolsContext` (`tools.ts`) получает новое поле `backend: ExecutionBackend`.
+- `createBranchWithRetry`/`createBranch` (prune-путь) берут `backend` из контекста, как в п.2.4.
+- `handleSprout`'ный прямой вызов `forkSession(context.getSessionId(), {dir: context.dir})` заменяется на `context.backend.forkSession(context.getSessionId(), {dir: context.dir})` — сам SDK-импорт (`forkSession` из `@anthropic-ai/claude-agent-sdk`) убирается из `tools.ts` целиком. Окружающая логика (async/sync ветвление, ручная запись `SproutAuditEntry`, `asyncSproutLimiter`) не трогается — это mekiri-host-специфичная политика, не предмет этой фазы.
+- `repl.ts` создаёт единственный `createClaudeCodeBackend()` инстанс рядом с уже существующим `createAsyncSproutLimiter()` и передаёт его в `createMekiriTools({...backend, ...})`.
+- Клоны получают тот же backend через уже существующий механизм проброса (`handleSprout`'ный `buildTools`, который сегодня прокидывает `asyncSproutLimiter`/`onAsyncSproutComplete` в контекст клона тем же паттерном `...dynamic` — `backend` добавляется туда же, одной строкой, без изменения структуры проброса).
+
+Один инстанс на процесс (родитель и все клоны его переиспользуют), не пересоздаётся per-call — backend не хранит состояние сессии, так что это не влияет на поведение, просто экономит аллокации.
 
 ## 3. Тестирование — доказательство, а не формальность
 
