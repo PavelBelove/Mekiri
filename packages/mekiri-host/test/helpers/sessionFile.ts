@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { sanitizeDir } from "mekiri-core";
+export { sanitizeDir } from "mekiri-core";
 import type { RawLine } from "mekiri-core";
 
 export async function writeSessionFile(configDir: string, dir: string, sessionId: string, lines: RawLine[]): Promise<void> {
