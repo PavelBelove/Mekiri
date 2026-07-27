@@ -23,3 +23,4 @@ export type { AuditEntry, PruneAuditEntry, SproutAuditEntry, ConfigureAuditEntry
 export { createBranch } from "./branch.js";
 export type { CreateBranchArgs, CreateBranchResult } from "./branch.js";
 export { distillationRatio, branchCompression, lifetimeTokenSavings, contextRecyclingRatio } from "./metrics.js";
+export { sanitizeDir, readSessionTranscript } from "./sessionTranscript.js";

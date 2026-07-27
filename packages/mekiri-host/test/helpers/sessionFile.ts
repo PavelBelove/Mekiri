@@ -1,15 +1,8 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { sanitizeDir } from "mekiri-core";
 import type { RawLine } from "mekiri-core";
-
-// Mirrors Claude Code's project-directory sanitization: replace every
-// non-alphanumeric character with "-" (verified against the compiled SDK
-// during mekiri-core's Task 7, and reused unchanged by every mekiri-host
-// test that seeds a fixture session file).
-export function sanitizeDir(dir: string): string {
-  return dir.replace(/[^a-zA-Z0-9]/g, "-");
-}
 
 export async function writeSessionFile(configDir: string, dir: string, sessionId: string, lines: RawLine[]): Promise<void> {
   const filePath = path.join(configDir, "projects", sanitizeDir(dir), `${sessionId}.jsonl`);
