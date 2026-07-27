@@ -26,3 +26,8 @@ export function contextRecyclingRatio(entries: AuditEntry[], totalContextProduce
   const recycled = entries.reduce((sum, entry) => sum + branchLengthOf(entry), 0);
   return recycled / totalContextProduced;
 }
+
+/** tz.md §12.2 — Virtual Context Lifetime = (actual - virtual) / virtual, as a fraction (e.g. 0.79 = 79%). */
+export function virtualContextLifetime(actualTurn: number, virtualTurn: number): number {
+  return (actualTurn - virtualTurn) / virtualTurn;
+}

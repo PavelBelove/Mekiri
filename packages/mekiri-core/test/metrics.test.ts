@@ -4,6 +4,7 @@ import {
   branchCompression,
   lifetimeTokenSavings,
   contextRecyclingRatio,
+  virtualContextLifetime,
 } from "../src/metrics.js";
 import type { PruneAuditEntry, SproutAuditEntry, AuditEntry } from "../src/auditLog.js";
 
@@ -43,5 +44,15 @@ describe("metrics", () => {
     const entries: AuditEntry[] = [pruneEntry, sproutEntry];
     const ratio = contextRecyclingRatio(entries, 20000);
     expect(ratio).toBeCloseTo((12400 + 2000) / 20000, 5);
+  });
+});
+
+describe("virtualContextLifetime", () => {
+  it("matches tz.md's own worked example (61 actual, 34 virtual -> ~79%)", () => {
+    expect(virtualContextLifetime(61, 34)).toBeCloseTo(0.794, 2);
+  });
+
+  it("is 0 when actual equals virtual (no prune happened along the trunk)", () => {
+    expect(virtualContextLifetime(10, 10)).toBe(0);
   });
 });
