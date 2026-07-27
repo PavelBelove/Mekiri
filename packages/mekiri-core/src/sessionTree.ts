@@ -35,6 +35,8 @@ function nodeFromEntry(entry: AuditEntry): SessionNode | undefined {
       fruitOrHarvestLength: entry.harvestLength,
     };
   }
+  // Other audit event types (e.g. "configure_mekiri") don't represent
+  // session-tree edges; intentionally filtered out, not an unhandled case.
   return undefined;
 }
 
@@ -68,9 +70,19 @@ export function buildSessionForest(entries: AuditEntry[]): SessionTree[] {
   const forest: SessionTree[] = [];
   for (const rootSessionId of rootIds) {
     const nodes: SessionNode[] = [];
+    // audit.jsonl is parsed from disk with zero validation, so a corrupted
+    // or hand-edited log (or a future bug in the append path) could contain
+    // a cycle. Guard against it explicitly rather than looping forever.
+    const visited = new Set<string>();
     const queue = [...(childrenByParent.get(rootSessionId) ?? [])];
     while (queue.length > 0) {
       const node = queue.shift() as SessionNode;
+      if (visited.has(node.sessionId)) {
+        throw new Error(
+          `buildSessionForest: cycle detected in audit log -- sessionId "${node.sessionId}" was reached more than once while walking the tree rooted at "${rootSessionId}"`,
+        );
+      }
+      visited.add(node.sessionId);
       nodes.push(node);
       queue.push(...(childrenByParent.get(node.sessionId) ?? []));
     }
@@ -90,12 +102,32 @@ export function buildSessionForest(entries: AuditEntry[]): SessionTree[] {
 export function findPruneTrunk(tree: SessionTree): SessionNode[] {
   const pruneChildByParent = new Map<string, SessionNode>();
   for (const node of tree.nodes) {
-    if (node.branchType === "prune") pruneChildByParent.set(node.parentSessionId, node);
+    if (node.branchType !== "prune") continue;
+    // The single-prune-child invariant should always hold (a pruned session
+    // is archived and never pruned again). If the audit log violates it --
+    // corruption, hand-editing, or a future append-path bug -- fail loudly
+    // instead of silently keeping only the last-seen prune child.
+    const existing = pruneChildByParent.get(node.parentSessionId);
+    if (existing) {
+      throw new Error(
+        `findPruneTrunk: audit log violates single-prune-child invariant -- parent sessionId "${node.parentSessionId}" has more than one prune child ("${existing.sessionId}" and "${node.sessionId}")`,
+      );
+    }
+    pruneChildByParent.set(node.parentSessionId, node);
   }
   const trunk: SessionNode[] = [];
+  // Same trust-boundary concern as buildSessionForest: guard against a cycle
+  // in the prune chain so a corrupted log can't hang this loop forever.
+  const visited = new Set<string>();
   let currentId = tree.rootSessionId;
   while (pruneChildByParent.has(currentId)) {
     const next = pruneChildByParent.get(currentId) as SessionNode;
+    if (visited.has(next.sessionId)) {
+      throw new Error(
+        `findPruneTrunk: cycle detected in prune chain -- sessionId "${next.sessionId}" was reached more than once while walking the trunk rooted at "${tree.rootSessionId}"`,
+      );
+    }
+    visited.add(next.sessionId);
     trunk.push(next);
     currentId = next.sessionId;
   }

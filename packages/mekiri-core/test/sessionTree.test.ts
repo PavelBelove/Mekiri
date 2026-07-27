@@ -50,6 +50,15 @@ describe("buildSessionForest", () => {
     expect(cloneNode?.branchType).toBe("sprout");
     expect(cloneNode?.parentSessionId).toBe("a");
   });
+
+  it("throws instead of hanging when the audit log contains a cycle", () => {
+    const entries: AuditEntry[] = [
+      pruneEntry("root", "a", "2026-01-01T00:00:00.000Z"),
+      pruneEntry("a", "b", "2026-01-01T01:00:00.000Z"),
+      pruneEntry("b", "a", "2026-01-01T02:00:00.000Z"),
+    ];
+    expect(() => buildSessionForest(entries)).toThrow();
+  });
 });
 
 describe("findPruneTrunk", () => {
@@ -67,5 +76,20 @@ describe("findPruneTrunk", () => {
     const forest = buildSessionForest(entries);
     const trunk = findPruneTrunk(forest[0]);
     expect(trunk.map((n) => n.sessionId)).toEqual(["a", "b"]);
+  });
+
+  it("throws when the audit log violates the single-prune-child invariant", () => {
+    // Constructed directly (not via buildSessionForest) so this exercises
+    // findPruneTrunk's own duplicate-prune-child detection in isolation:
+    // two distinct prune nodes claiming the same parentSessionId, with no
+    // cycle involved, so buildSessionForest wouldn't have caught this itself.
+    const tree = {
+      rootSessionId: "root",
+      nodes: [
+        { sessionId: "a", parentSessionId: "root", branchType: "prune" as const, timestamp: "t1", removedOrBranchLength: 1, fruitOrHarvestLength: 1 },
+        { sessionId: "a2", parentSessionId: "root", branchType: "prune" as const, timestamp: "t2", removedOrBranchLength: 1, fruitOrHarvestLength: 1 },
+      ],
+    };
+    expect(() => findPruneTrunk(tree)).toThrow();
   });
 });
