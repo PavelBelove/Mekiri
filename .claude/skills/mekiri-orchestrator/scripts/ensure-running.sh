@@ -30,7 +30,7 @@ mkdir -p "$SESSION_DIR"
 # anchored at end of line) keeps two different project dirs' sessions from
 # ever being confused with each other.
 escape_regex() {
-  printf '%s' "$1" | sed -e 's/[][\.^$*]/\\&/g'
+  printf '%s' "$1" | sed -e 's/[]\\[\.^$*+?(){}|]/\\&/g'
 }
 WORKER_PATTERN="src/index\.ts --dir $(escape_regex "$PROJECT_DIR")\$"
 
