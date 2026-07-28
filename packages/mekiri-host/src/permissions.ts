@@ -45,6 +45,18 @@ export const canUseTool: CanUseTool = async (toolName) => {
   };
 };
 
+// --trusted mode: canUseTool becomes unconditional allow, granting the
+// session real Bash/Edit/Write alongside its existing mekiri tools. The
+// existing `canUseTool` export above is untouched and remains the default
+// (deny-by-default) behavior when trusted is false -- resolveCanUseTool is
+// the only new entry point buildQueryOptions uses internally.
+export function resolveCanUseTool(trusted: boolean): CanUseTool {
+  if (trusted) {
+    return async () => ({ behavior: "allow" });
+  }
+  return canUseTool;
+}
+
 // Layer 1 of the three-layer prompt split (see feedback-mekiri-prompt-layering
 // memory): basic, stable rules that apply identically to the parent session
 // and every sprout clone. Role-specific framing ("you are a clone...") stays
@@ -82,6 +94,21 @@ applies even mid-turn, not just at the start of a new task.
 This host currently only auto-approves Mekiri's own tools and read-only
 tools (Read/Grep/Glob); Bash, Edit, Write, and any other MCP tool are
 denied.`;
+
+// Appended to MEKIRI_SYSTEM_PROMPT only when trusted mode is on (see
+// buildQueryOptions). Kept as a separate constant, not folded into
+// MEKIRI_SYSTEM_PROMPT itself, so the base prompt's existing text and the
+// tests that check it verbatim never need to change.
+export const TRUSTED_MODE_ADDENDUM = `
+
+TRUSTED MODE: you also have real Bash, Edit, and Write access in this
+session -- work like any careful engineer would (run tests before
+considering something done, read before you overwrite). This session runs
+unattended, with nobody watching to approve or deny actions turn-by-turn --
+so never perform irreversible or destructive operations (force-push,
+rm -rf, deleting branches, git reset --hard, or anything comparable) even
+if you'd normally ask first in an interactive session. If something
+genuinely requires one of those, stop and report back instead of doing it.`;
 
 // First-user-prompt hook: mekiri-tuning's Trigger B (see tuningSignal.ts)
 // currently relies entirely on the agent remembering to check
@@ -152,14 +179,16 @@ export function buildQueryOptions(context: {
   resume: string | undefined;
   cwd: string;
   mcpServers: Options["mcpServers"];
+  trusted?: boolean;
 }): Options {
+  const trusted = context.trusted ?? false;
   return {
     resume: context.resume,
     cwd: context.cwd,
     mcpServers: context.mcpServers,
-    canUseTool,
+    canUseTool: resolveCanUseTool(trusted),
     plugins: [{ type: "local", path: SKILLS_PLUGIN_PATH }],
-    systemPrompt: MEKIRI_SYSTEM_PROMPT,
+    systemPrompt: trusted ? MEKIRI_SYSTEM_PROMPT + TRUSTED_MODE_ADDENDUM : MEKIRI_SYSTEM_PROMPT,
     hooks: { UserPromptSubmit: [{ hooks: [createFirstPromptTuningSignalHook(context.cwd)] }] },
   };
 }

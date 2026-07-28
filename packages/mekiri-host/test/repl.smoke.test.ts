@@ -7,7 +7,14 @@ import type { UserPromptSubmitHookInput } from "@anthropic-ai/claude-agent-sdk";
 import { createInputQueue } from "../src/inputQueue.js";
 import { createMekiriTools, handleSprout } from "../src/tools.js";
 import { createAsyncSproutLimiter } from "../src/asyncSproutLimiter.js";
-import { canUseTool, buildQueryOptions, formatQueryErrorMessage, MEKIRI_SYSTEM_PROMPT } from "../src/permissions.js";
+import {
+  canUseTool,
+  buildQueryOptions,
+  formatQueryErrorMessage,
+  MEKIRI_SYSTEM_PROMPT,
+  resolveCanUseTool,
+  TRUSTED_MODE_ADDENDUM,
+} from "../src/permissions.js";
 import { writeSessionFile, copyRealCredentials } from "./helpers/sessionFile.js";
 import { loadConfig, readAuditLog, createClaudeCodeBackend } from "mekiri-core";
 import type { RawLine } from "mekiri-core";
@@ -218,6 +225,39 @@ describe("buildQueryOptions", () => {
     } finally {
       await rm(projectDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("resolveCanUseTool", () => {
+  it("returns the existing restrictive canUseTool when trusted is false", async () => {
+    const result = await resolveCanUseTool(false)("Bash", {}, {} as any);
+    expect(result.behavior).toBe("deny");
+  });
+
+  it("allows mekiri's own tools when trusted is false (unchanged behavior)", async () => {
+    const result = await resolveCanUseTool(false)("mcp__mekiri__prune", {}, {} as any);
+    expect(result.behavior).toBe("allow");
+  });
+
+  it("allows any tool at all when trusted is true", async () => {
+    const bash = await resolveCanUseTool(true)("Bash", {}, {} as any);
+    const edit = await resolveCanUseTool(true)("Edit", {}, {} as any);
+    const write = await resolveCanUseTool(true)("Write", {}, {} as any);
+    expect(bash.behavior).toBe("allow");
+    expect(edit.behavior).toBe("allow");
+    expect(write.behavior).toBe("allow");
+  });
+});
+
+describe("buildQueryOptions trusted mode", () => {
+  it("does not include TRUSTED_MODE_ADDENDUM when trusted is omitted (default false)", () => {
+    const options = buildQueryOptions({ resume: undefined, cwd: "/tmp/irrelevant", mcpServers: {} });
+    expect(options.systemPrompt).toBe(MEKIRI_SYSTEM_PROMPT);
+  });
+
+  it("appends TRUSTED_MODE_ADDENDUM when trusted is true", () => {
+    const options = buildQueryOptions({ resume: undefined, cwd: "/tmp/irrelevant", mcpServers: {}, trusted: true });
+    expect(options.systemPrompt).toBe(MEKIRI_SYSTEM_PROMPT + TRUSTED_MODE_ADDENDUM);
   });
 });
 
