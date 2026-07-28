@@ -10,6 +10,15 @@ function formatPercent(fraction: number): string {
   return `${(fraction * 100).toFixed(1)}%`;
 }
 
+function jsonReplacer(_key: string, value: unknown): unknown {
+  if (typeof value === "number") {
+    if (value === Infinity) return "Infinity";
+    if (value === -Infinity) return "-Infinity";
+    if (Number.isNaN(value)) return "NaN";
+  }
+  return value;
+}
+
 function printHumanReadable(report: Awaited<ReturnType<typeof computeProjectReport>>): void {
   if (report.trees.length === 0) {
     console.log("No session trees found in .mekiri/audit.jsonl -- nothing to report yet.");
@@ -45,7 +54,7 @@ async function main(): Promise<void> {
   const report = await computeProjectReport(dir);
 
   if (asJson) {
-    console.log(JSON.stringify(report, null, 2));
+    console.log(JSON.stringify(report, jsonReplacer, 2));
   } else {
     printHumanReadable(report);
   }

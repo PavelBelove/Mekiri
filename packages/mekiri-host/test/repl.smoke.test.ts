@@ -969,6 +969,7 @@ describe("mekiri-host live smoke test: rollback economics steers timing, not jus
 
       const combined = JSON.stringify(blocks).toLowerCase();
       expect(combined).toContain("prune");
+      expect(combined).not.toContain("постфактум");
     } finally {
       await rm(projectDir, { recursive: true, force: true });
     }
