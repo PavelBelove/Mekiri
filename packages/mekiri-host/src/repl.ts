@@ -12,6 +12,7 @@ export { canUseTool, buildQueryOptions, formatQueryErrorMessage } from "./permis
 export interface ReplOptions {
   resumeSessionId?: string;
   dir: string;
+  trusted?: boolean;
 }
 
 export async function runRepl(options: ReplOptions): Promise<void> {
@@ -49,6 +50,7 @@ export async function runRepl(options: ReplOptions): Promise<void> {
       currentInput.push(injectText);
     },
     backend,
+    trusted: options.trusted,
   });
 
   let running = true;
@@ -60,6 +62,7 @@ export async function runRepl(options: ReplOptions): Promise<void> {
           resume: currentSessionId,
           cwd: options.dir,
           mcpServers: { mekiri: tools },
+          trusted: options.trusted,
         }),
       });
 

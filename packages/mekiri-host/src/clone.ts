@@ -24,6 +24,7 @@ export async function runClone(
   forkedSessionId: string | undefined,
   dir: string,
   buildTools: (dynamic: CloneDynamicContext) => McpSdkServerConfigWithInstance,
+  trusted: boolean = false,
 ): Promise<RunCloneResult> {
   let transcript = createLiveTranscript();
   let currentInput = createInputQueue();
@@ -52,7 +53,7 @@ export async function runClone(
   while (!harvested) {
     const q = query({
       prompt: currentInput.iterable,
-      options: buildQueryOptions({ resume: currentSessionId, cwd: dir, mcpServers: { mekiri: tools } }),
+      options: buildQueryOptions({ resume: currentSessionId, cwd: dir, mcpServers: { mekiri: tools }, trusted }),
     });
 
     for await (const message of q) {

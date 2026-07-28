@@ -62,6 +62,7 @@ export interface MekiriToolsContext {
   asyncSproutLimiter: AsyncSproutLimiter;
   onAsyncSproutComplete: (injectText: string) => void;
   backend: ExecutionBackend;
+  trusted?: boolean;
 }
 
 export interface PruneArgs {
@@ -216,6 +217,7 @@ export async function handleSprout(context: MekiriToolsContext, args: SproutArgs
         throw new Error("mekiri-host: onAsyncSproutComplete should never be invoked from a clone context -- async sprout is parent-only");
       },
       backend: context.backend,
+      trusted: context.trusted,
       ...dynamic,
     });
 
@@ -238,7 +240,7 @@ export async function handleSprout(context: MekiriToolsContext, args: SproutArgs
   ].join("\n");
 
   if (waitMode === "async") {
-    runClone(framedTask, forkedSessionId, context.dir, buildTools)
+    runClone(framedTask, forkedSessionId, context.dir, buildTools, context.trusted ?? false)
       .then(async (cloneResult) => {
         try {
           const auditEntry: SproutAuditEntry = {
@@ -273,7 +275,7 @@ export async function handleSprout(context: MekiriToolsContext, args: SproutArgs
     };
   }
 
-  const cloneResult = await runClone(framedTask, forkedSessionId, context.dir, buildTools);
+  const cloneResult = await runClone(framedTask, forkedSessionId, context.dir, buildTools, context.trusted ?? false);
 
   const auditEntry: SproutAuditEntry = {
     event: "sprout",

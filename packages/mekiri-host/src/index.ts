@@ -2,9 +2,10 @@ export const PACKAGE_NAME = "mekiri-host";
 export { runRepl } from "./repl.js";
 export type { ReplOptions } from "./repl.js";
 
-function parseArgs(argv: string[]): { resumeSessionId?: string; dir: string } {
+function parseArgs(argv: string[]): { resumeSessionId?: string; dir: string; trusted: boolean } {
   let resumeSessionId: string | undefined;
   let dir = process.cwd();
+  let trusted = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--resume" && argv[i + 1]) {
       resumeSessionId = argv[i + 1];
@@ -12,14 +13,16 @@ function parseArgs(argv: string[]): { resumeSessionId?: string; dir: string } {
     } else if (argv[i] === "--dir" && argv[i + 1]) {
       dir = argv[i + 1];
       i++;
+    } else if (argv[i] === "--trusted") {
+      trusted = true;
     }
   }
-  return { resumeSessionId, dir };
+  return { resumeSessionId, dir, trusted };
 }
 
 const isMainModule = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 if (isMainModule) {
   const { runRepl } = await import("./repl.js");
-  const { resumeSessionId, dir } = parseArgs(process.argv.slice(2));
-  await runRepl({ resumeSessionId, dir });
+  const { resumeSessionId, dir, trusted } = parseArgs(process.argv.slice(2));
+  await runRepl({ resumeSessionId, dir, trusted });
 }
