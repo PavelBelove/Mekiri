@@ -101,8 +101,9 @@ denied.`;
 // tests that check it verbatim never need to change.
 export const TRUSTED_MODE_ADDENDUM = `
 
-TRUSTED MODE: you also have real Bash, Edit, and Write access in this
-session -- work like any careful engineer would (run tests before
+TRUSTED MODE: overriding the note above about Bash/Edit/Write being denied
+-- in this session you have real access to all three. Work like any
+careful engineer would (run tests before
 considering something done, read before you overwrite). This session runs
 unattended, with nobody watching to approve or deny actions turn-by-turn --
 so never perform irreversible or destructive operations (force-push,
