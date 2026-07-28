@@ -1015,3 +1015,52 @@ describe("mekiri-host live smoke test: rollback economics steers timing, not jus
     }
   }, 60_000);
 });
+
+describe("mekiri-host live smoke test: trusted mode grants real Edit access", () => {
+  it("a real model turn can Edit a file when trusted, something the default mode denies", async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), "mekiri-host-trusted-smoke-"));
+    const targetFile = path.join(projectDir, "marker.txt");
+
+    try {
+      const { promises: fs } = await import("node:fs");
+      await fs.writeFile(targetFile, "before\n", "utf8");
+
+      const tools = createMekiriTools({
+        dir: projectDir,
+        depth: 0,
+        isClone: false,
+        backend: createClaudeCodeBackend(),
+        getSessionId: () => "unused-in-this-test",
+        getTranscript: () => [],
+        onSwitch: () => {
+          throw new Error("prune should not be called in this test");
+        },
+        onHarvest: () => {
+          throw new Error("harvest should not be called in this test");
+        },
+        asyncSproutLimiter: createAsyncSproutLimiter(),
+        onAsyncSproutComplete: () => {
+          throw new Error("onAsyncSproutComplete should not be called in this test");
+        },
+        trusted: true,
+      });
+
+      const { iterable, push, close } = createInputQueue();
+      push(`Use the Edit tool to replace the exact text "before" with "after" in the file ${targetFile}. Do it now, don't ask for confirmation.`);
+      close();
+
+      const q = query({
+        prompt: iterable,
+        options: buildQueryOptions({ resume: undefined, cwd: projectDir, mcpServers: { mekiri: tools }, trusted: true }),
+      });
+      for await (const _message of q) {
+        // Drain the stream; the assertion is on the file's real content, not on message contents.
+      }
+
+      const finalContent = await fs.readFile(targetFile, "utf8");
+      expect(finalContent).toContain("after");
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
