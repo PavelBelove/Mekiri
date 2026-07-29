@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
 import { ensureDaemon } from "../src/daemonEnsure.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +25,16 @@ describe("ensureDaemon", () => {
     if (manuallyStarted) {
       await new Promise<void>((resolve) => manuallyStarted!.close(() => resolve()));
       manuallyStarted = undefined;
+    }
+    // Kill any daemon process left listening on port 18901 from ensureDaemon() test.
+    // Give it a moment to shut down naturally first.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Use fuser to kill any process listening on port 18901.
+    // Wrapped in try-catch since fuser may not be available or nothing may be listening.
+    try {
+      execSync("fuser -k 18901/tcp 2>/dev/null", { shell: true, stdio: "pipe" });
+    } catch (error) {
+      // Expected to fail if nothing is listening or fuser is not available - that's OK
     }
   });
 
