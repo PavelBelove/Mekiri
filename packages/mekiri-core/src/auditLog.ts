@@ -6,7 +6,10 @@ export interface PruneAuditEntry {
   event: "prune";
   timestamp: string;
   sessionId: string;
-  newSessionId: string;
+  /** Absent for prune events produced by mekiri-proxy's wire-level rewrite --
+   *  that model never creates a new session, only mekiri-host's session-fork
+   *  model does. */
+  newSessionId?: string;
   noteType: NoteType;
   /** Length in characters of the removed branch content — a Phase 1 proxy metric.
    *  Real token counts require live SDK usage data (see mekiri-host plan). */

@@ -43,4 +43,18 @@ describe("audit log", () => {
     const log = await readAuditLog(projectDir);
     expect(log).toEqual([first, second]);
   });
+
+  it("round-trips a prune entry with no newSessionId (wire-level prune)", async () => {
+    await appendAuditEntry(projectDir, {
+      event: "prune",
+      timestamp: "2026-07-24T00:02:00.000Z",
+      sessionId: "session-abc",
+      noteType: "portal",
+      removedBranchLength: 100,
+      fruitLength: 20,
+    });
+    const entries = await readAuditLog(projectDir);
+    expect(entries).toHaveLength(1);
+    expect((entries[0] as any).newSessionId).toBeUndefined();
+  });
 });
