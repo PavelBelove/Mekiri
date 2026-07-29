@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mekiri-proxy": {
+      "command": "npx",
+      "args": ["tsx", "packages/mekiri-proxy/bin/mcp-server.ts"]
+    }
+  }
+}
