@@ -23,7 +23,7 @@ describe("ruleStore", () => {
 
   it("persists and reloads a rule keyed by sessionId", async () => {
     const { saveRule, loadAllRules } = await import("../src/ruleStore.js");
-    const rule = { keepFromIndex: 2, replacement: [{ role: "user" as const, content: "note" }] };
+    const rule = { matchQuote: "some quoted text", replacement: [{ role: "user" as const, content: "note" }] };
     await saveRule("session-abc", "/some/project", rule);
 
     const all = await loadAllRules();
@@ -34,8 +34,8 @@ describe("ruleStore", () => {
 
   it("preserves previously saved rules for other sessions", async () => {
     const { saveRule, loadAllRules } = await import("../src/ruleStore.js");
-    await saveRule("session-a", "/proj-a", { keepFromIndex: 1, replacement: [] });
-    await saveRule("session-b", "/proj-b", { keepFromIndex: 3, replacement: [] });
+    await saveRule("session-a", "/proj-a", { matchQuote: "some quoted text", replacement: [] });
+    await saveRule("session-b", "/proj-b", { matchQuote: "other quoted text", replacement: [] });
 
     const all = await loadAllRules();
     expect(Object.keys(all).sort()).toEqual(["session-a", "session-b"]);

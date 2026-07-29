@@ -86,7 +86,7 @@ describe("daemon", () => {
       {
         sessionId: "cut-session",
         dir: "/some/project",
-        rule: { keepFromIndex: 2, replacement: [{ role: "user", content: "[distillate]" }] },
+        rule: { matchQuote: "old reply text", replacement: [{ role: "user", content: "[distillate]" }] },
       }
     );
     expect(registerResult.status).toBe(200);
@@ -95,7 +95,7 @@ describe("daemon", () => {
     const requestBody = {
       messages: [
         { role: "user", content: "old turn" },
-        { role: "assistant", content: "old reply" },
+        { role: "assistant", content: [{ type: "text", text: "old reply text" }] },
         { role: "user", content: "new turn" },
       ],
       metadata: { user_id: JSON.stringify({ session_id: "cut-session" }) },
