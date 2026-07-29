@@ -70,6 +70,37 @@ describe("metricsReport (LTS + CRR)", () => {
     expect(results[0].savings).toBe(500 * 4);
   });
 
+  it("computeLifetimeTokenSavingsForTree skips wire-level prune entries (no newSessionId)", async () => {
+    // A wire-level prune (mekiri-proxy) never forks a new session, so it has
+    // no newSessionId and no tree node to measure subsequent-request savings
+    // against. It must be skipped without affecting the host-style prune
+    // entry alongside it in the same entries array.
+    const hostPrune: PruneAuditEntry = {
+      event: "prune",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      sessionId: "root",
+      newSessionId: "a",
+      noteType: "portal",
+      removedBranchLength: 500,
+      fruitLength: 50,
+    };
+    const wirePrune: PruneAuditEntry = {
+      event: "prune",
+      timestamp: "2026-01-01T00:30:00.000Z",
+      sessionId: "a",
+      noteType: "portal",
+      removedBranchLength: 200,
+      fruitLength: 20,
+    };
+    const forest = buildSessionForest([hostPrune]);
+    await writeFixtureTranscript(configDir, "a", 4);
+
+    const results = await computeLifetimeTokenSavingsForTree(projectDir, forest[0], [hostPrune, wirePrune]);
+    expect(results).toHaveLength(1);
+    expect(results[0].newSessionId).toBe("a");
+    expect(results[0].savings).toBe(500 * 4);
+  });
+
   it("computeTotalContextProduced sums transcript lengths across every node including the root", async () => {
     const entries: AuditEntry[] = [
       { event: "prune", timestamp: "2026-01-01T00:00:00.000Z", sessionId: "root", newSessionId: "a", noteType: "portal", removedBranchLength: 500, fruitLength: 50 },
@@ -228,6 +259,43 @@ describe("computeProjectReport", () => {
       expect(report.trees[0].totalLifetimeTokenSavings).toBe(0);
       expect(report.trees[0].totalContextProduced).toBe(4);
       expect(report.trees[0].virtualContextLifetime).toBeUndefined();
+    } finally {
+      await rm(realProjectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes a wire-level prune entry (no newSessionId) from pruneCount and tree metrics", async () => {
+    // Mixes a host-style prune (has newSessionId, forks a tree node) with a
+    // wire-level prune (mekiri-proxy, no newSessionId, no fork) in the same
+    // audit log. The wire-level entry must not crash computeProjectReport,
+    // must not appear as a tree node, and must not be counted in pruneCount.
+    const { appendAuditEntry } = await import("../src/auditLog.js");
+    const realProjectDir = await mkdtemp(path.join(tmpdir(), "mekiri-core-wire-prune-project-"));
+    try {
+      await appendAuditEntry(realProjectDir, {
+        event: "prune",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        sessionId: "root",
+        newSessionId: "a",
+        noteType: "portal",
+        removedBranchLength: 500,
+        fruitLength: 50,
+      });
+      await appendAuditEntry(realProjectDir, {
+        event: "prune",
+        timestamp: "2026-01-01T00:30:00.000Z",
+        sessionId: "a",
+        noteType: "portal",
+        removedBranchLength: 200,
+        fruitLength: 20,
+      });
+
+      const report = await computeProjectReport(realProjectDir);
+      expect(report.trees).toHaveLength(1);
+      expect(report.trees[0].rootSessionId).toBe("root");
+      expect(report.trees[0].pruneCount).toBe(1);
+      expect(report.trees[0].pruneSavings).toHaveLength(1);
+      expect(report.trees[0].pruneSavings[0].newSessionId).toBe("a");
     } finally {
       await rm(realProjectDir, { recursive: true, force: true });
     }

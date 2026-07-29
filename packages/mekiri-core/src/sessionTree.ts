@@ -16,6 +16,11 @@ export interface SessionTree {
 
 function nodeFromEntry(entry: AuditEntry): SessionNode | undefined {
   if (entry.event === "prune") {
+    // Wire-level prunes (mekiri-proxy) rewrite the request for the same
+    // session and never fork a new one, so entry.newSessionId is absent.
+    // With no new session there is no fork edge to add to the tree --
+    // treat it the same as the other non-tree event types below.
+    if (entry.newSessionId === undefined) return undefined;
     return {
       sessionId: entry.newSessionId,
       parentSessionId: entry.sessionId,

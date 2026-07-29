@@ -51,6 +51,30 @@ describe("buildSessionForest", () => {
     expect(cloneNode?.parentSessionId).toBe("a");
   });
 
+  it("excludes a wire-level prune entry (no newSessionId) from the tree without dropping surrounding entries", () => {
+    // mekiri-proxy's wire-level prune rewrites the request for the same
+    // session and never forks a new one, so it has no newSessionId. It
+    // should be invisible to the tree (no node, no edge) while the
+    // host-style prunes around it in the same log are still built normally.
+    const wireLevelPruneEntry: AuditEntry = {
+      event: "prune",
+      timestamp: "2026-01-01T00:30:00.000Z",
+      sessionId: "a",
+      noteType: "portal",
+      removedBranchLength: 10,
+      fruitLength: 5,
+    };
+    const entries: AuditEntry[] = [
+      pruneEntry("root", "a", "2026-01-01T00:00:00.000Z"),
+      wireLevelPruneEntry,
+      pruneEntry("a", "b", "2026-01-01T01:00:00.000Z"),
+    ];
+    const forest = buildSessionForest(entries);
+    expect(forest).toHaveLength(1);
+    expect(forest[0].nodes).toHaveLength(2);
+    expect(forest[0].nodes.map((n) => n.sessionId).sort()).toEqual(["a", "b"]);
+  });
+
   it("throws instead of hanging when the audit log contains a cycle", () => {
     const entries: AuditEntry[] = [
       pruneEntry("root", "a", "2026-01-01T00:00:00.000Z"),

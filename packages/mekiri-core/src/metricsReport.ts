@@ -49,6 +49,11 @@ export interface PruneSavings {
 export async function computeLifetimeTokenSavingsForTree(dir: string, tree: SessionTree, entries: PruneAuditEntry[]): Promise<PruneSavings[]> {
   const results: PruneSavings[] = [];
   for (const entry of entries) {
+    // Wire-level prune entries (mekiri-proxy) never fork a new session, so
+    // they have no newSessionId and no corresponding tree node to measure
+    // subsequent-request savings against -- skip them, same as sessionTree's
+    // nodeFromEntry already does for tree construction.
+    if (entry.newSessionId === undefined) continue;
     const subsequentRequestCount = await computeSubsequentRequestCount(dir, tree, entry.newSessionId);
     results.push({
       sessionId: entry.sessionId,
@@ -150,7 +155,8 @@ export async function computeProjectReport(dir: string): Promise<ProjectMetricsR
     const nodeIds = new Set(tree.nodes.map((n) => n.sessionId));
     const treeEntries = entries.filter(
       (e): e is PruneAuditEntry | SproutAuditEntry =>
-        (e.event === "prune" && nodeIds.has(e.newSessionId)) || (e.event === "sprout" && nodeIds.has(e.childSessionId)),
+        (e.event === "prune" && e.newSessionId !== undefined && nodeIds.has(e.newSessionId)) ||
+        (e.event === "sprout" && nodeIds.has(e.childSessionId)),
     );
     const pruneEntries = treeEntries.filter((e): e is PruneAuditEntry => e.event === "prune");
     const sproutEntries = treeEntries.filter((e): e is SproutAuditEntry => e.event === "sprout");
