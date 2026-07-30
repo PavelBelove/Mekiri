@@ -10,6 +10,7 @@ vi.mock("mekiri-core", async () => {
       { type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: "the answer is 42" }] } },
     ]),
     appendAuditEntry: vi.fn(async () => {}),
+    loadConfig: vi.fn(async () => actual.defaultConfig()),
   };
 });
 
@@ -50,5 +51,14 @@ describe("prune handler", () => {
 
     expect(result.status).toBe("invalid_fruit");
     expect(postControlRule).not.toHaveBeenCalled();
+  });
+});
+
+describe("sprout handler", () => {
+  it("returns depth_limit_exceeded when own depth is at the configured limit", async () => {
+    const handlers = createToolHandlers({ sessionId: "s1", dir: "/proj", depth: 1, daemonPort: 8791, postControlRule: vi.fn() });
+    // default config's sprout.depth_limit is 1 (see mekiri-core's defaultConfig) -- depth 1 means already at the ceiling
+    const result = await handlers.sprout({ task: "investigate X" });
+    expect(result).toEqual({ status: "depth_limit_exceeded" });
   });
 });

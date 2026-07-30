@@ -53,7 +53,14 @@ async function main() {
     async (args) => ({ content: [{ type: "text", text: JSON.stringify(await handlers.configure_mekiri(args as any)) }] })
   );
 
-  // sprout is registered here too, once Task 11 lands -- see that task for the diff.
+  server.registerTool(
+    "sprout",
+    {
+      description: "Форкнуть тёплого клона текущей сессии на изолированную подзадачу, унаследовав весь текущий контекст.",
+      inputSchema: { task: z.string(), wait_mode: z.enum(["sync", "async"]).optional() },
+    },
+    async (args) => ({ content: [{ type: "text", text: JSON.stringify(await handlers.sprout(args)) }] })
+  );
 
   await server.connect(new StdioServerTransport());
 }

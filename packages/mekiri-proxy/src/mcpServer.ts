@@ -10,6 +10,7 @@ import {
 } from "mekiri-core";
 import type { NoteType, PortalFruit, DeathReloadFruit, MekiriConfig } from "mekiri-core";
 import type { RewriteRule } from "./rewriteMessages.js";
+import { spawnClone } from "./spawnClone.js";
 
 export interface McpServerContext {
   sessionId: string;
@@ -70,6 +71,15 @@ interface ConfigureArgs {
 
 type ConfigureResult = { status: "ok" } | { status: "invalid"; errors: string[] };
 
+interface SproutArgs {
+  task: string;
+  wait_mode?: "sync" | "async";
+}
+
+type SproutResult =
+  | { status: "ok"; child_session_id: string; result: string }
+  | { status: "depth_limit_exceeded" };
+
 export function createToolHandlers(context: McpServerContext) {
   return {
     async prune(args: PruneArgs): Promise<PruneResult> {
@@ -128,6 +138,32 @@ export function createToolHandlers(context: McpServerContext) {
         patch: args.patch,
       });
       return { status: "ok" };
+    },
+
+    async sprout(args: SproutArgs): Promise<SproutResult> {
+      const config = await loadConfig(context.dir);
+      if (context.depth >= config.sprout.depth_limit) {
+        return { status: "depth_limit_exceeded" };
+      }
+
+      const { childSessionId, result } = await spawnClone({
+        sessionId: context.sessionId,
+        task: args.task,
+        dir: context.dir,
+        proxyPort: context.daemonPort,
+        depth: context.depth + 1,
+      });
+
+      await appendAuditEntry(context.dir, {
+        event: "sprout",
+        timestamp: new Date().toISOString(),
+        sessionId: context.sessionId,
+        childSessionId,
+        branchLength: 0,
+        harvestLength: result.length,
+      });
+
+      return { status: "ok", child_session_id: childSessionId, result };
     },
   };
 }
