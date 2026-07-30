@@ -6,6 +6,7 @@
   "main": "src/index.ts",
   "scripts": {
     "test": "vitest run",
+    "test:live": "MEKIRI_PROXY_LIVE_TEST=1 vitest run test/live.smoke.test.ts",
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
