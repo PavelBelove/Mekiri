@@ -63,4 +63,23 @@ describe("ensureDaemon", () => {
 
     expect(await isHealthy(port)).toBe(true);
   });
+
+  it("rejects cleanly (instead of crashing the process) when spawnCommand does not exist", async () => {
+    // Mirrors the real bug: mcp-server.ts used to resolve a package-local
+    // tsx binary that does not exist in this repo's hoisted workspace
+    // layout, so spawn() emitted an ENOENT 'error' event with no listener
+    // attached, crashing the whole MCP server process. If ensureDaemon
+    // regresses to not attaching an 'error' listener, this test process
+    // itself will crash (an uncaught exception), not just fail an assertion.
+    const port = 18903;
+    expect(await isHealthy(port)).toBe(false);
+
+    const nonexistentBinary = path.join(__dirname, "definitely-does-not-exist", "tsx");
+
+    await expect(
+      ensureDaemon({ port, spawnCommand: nonexistentBinary, spawnArgs: [FIXTURE, String(port)] })
+    ).rejects.toThrow(/failed to spawn/i);
+
+    expect(await isHealthy(port)).toBe(false);
+  }, 10000);
 });

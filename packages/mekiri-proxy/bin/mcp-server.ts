@@ -16,9 +16,8 @@ async function main() {
   }
   const depth = Number(process.env.MEKIRI_SPROUT_DEPTH ?? 0);
 
-  const tsxBin = path.join(__dirname, "..", "node_modules", ".bin", "tsx");
   const daemonEntry = path.join(__dirname, "daemon.ts");
-  await ensureDaemon({ port: PORT, spawnCommand: tsxBin, spawnArgs: [daemonEntry, String(PORT)] });
+  await ensureDaemon({ port: PORT, spawnCommand: "npx", spawnArgs: ["tsx", daemonEntry, String(PORT)] });
 
   const handlers = createToolHandlers({
     sessionId,
