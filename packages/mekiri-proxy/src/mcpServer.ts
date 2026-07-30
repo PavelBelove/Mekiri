@@ -78,7 +78,8 @@ interface SproutArgs {
 
 type SproutResult =
   | { status: "ok"; child_session_id: string; result: string }
-  | { status: "depth_limit_exceeded" };
+  | { status: "depth_limit_exceeded" }
+  | { status: "async_not_supported" };
 
 export function createToolHandlers(context: McpServerContext) {
   return {
@@ -141,6 +142,10 @@ export function createToolHandlers(context: McpServerContext) {
     },
 
     async sprout(args: SproutArgs): Promise<SproutResult> {
+      if (args.wait_mode === "async") {
+        return { status: "async_not_supported" };
+      }
+
       const config = await loadConfig(context.dir);
       if (context.depth >= config.sprout.depth_limit) {
         return { status: "depth_limit_exceeded" };
@@ -154,12 +159,14 @@ export function createToolHandlers(context: McpServerContext) {
         depth: context.depth + 1,
       });
 
+      const transcript = await readSessionTranscript(context.dir, context.sessionId);
+
       await appendAuditEntry(context.dir, {
         event: "sprout",
         timestamp: new Date().toISOString(),
         sessionId: context.sessionId,
         childSessionId,
-        branchLength: 0,
+        branchLength: JSON.stringify(transcript).length,
         harvestLength: result.length,
       });
 

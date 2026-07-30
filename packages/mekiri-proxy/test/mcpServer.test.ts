@@ -1,18 +1,25 @@
 import { describe, it, expect, vi } from "vitest";
 import { createToolHandlers } from "../src/mcpServer.js";
+import { spawnClone } from "../src/spawnClone.js";
+
+const FIXTURE_TRANSCRIPT = [
+  { type: "user", uuid: "u1", message: { role: "user", content: [{ type: "text", text: "hello" }] } },
+  { type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: "the answer is 42" }] } },
+];
 
 vi.mock("mekiri-core", async () => {
   const actual = await vi.importActual<typeof import("mekiri-core")>("mekiri-core");
   return {
     ...actual,
-    readSessionTranscript: vi.fn(async () => [
-      { type: "user", uuid: "u1", message: { role: "user", content: [{ type: "text", text: "hello" }] } },
-      { type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: "the answer is 42" }] } },
-    ]),
+    readSessionTranscript: vi.fn(async () => FIXTURE_TRANSCRIPT),
     appendAuditEntry: vi.fn(async () => {}),
     loadConfig: vi.fn(async () => actual.defaultConfig()),
   };
 });
+
+vi.mock("../src/spawnClone.js", () => ({
+  spawnClone: vi.fn(async () => ({ childSessionId: "child-1", result: "done" })),
+}));
 
 describe("prune handler", () => {
   it("registers a rule with the daemon when the quote resolves unambiguously", async () => {
@@ -60,5 +67,30 @@ describe("sprout handler", () => {
     // default config's sprout.depth_limit is 1 (see mekiri-core's defaultConfig) -- depth 1 means already at the ceiling
     const result = await handlers.sprout({ task: "investigate X" });
     expect(result).toEqual({ status: "depth_limit_exceeded" });
+    expect(spawnClone).not.toHaveBeenCalled();
+  });
+
+  it("returns async_not_supported without calling spawnClone when wait_mode is async", async () => {
+    vi.mocked(spawnClone).mockClear();
+    const handlers = createToolHandlers({ sessionId: "s1", dir: "/proj", depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+    const result = await handlers.sprout({ task: "investigate X", wait_mode: "async" });
+    expect(result).toEqual({ status: "async_not_supported" });
+    expect(spawnClone).not.toHaveBeenCalled();
+  });
+
+  it("forks a clone and records the real transcript length as branchLength on success", async () => {
+    vi.mocked(spawnClone).mockClear();
+    const { appendAuditEntry } = await import("mekiri-core");
+    vi.mocked(appendAuditEntry).mockClear();
+
+    const handlers = createToolHandlers({ sessionId: "s1", dir: "/proj", depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+    const result = await handlers.sprout({ task: "investigate X" });
+
+    expect(result).toEqual({ status: "ok", child_session_id: "child-1", result: "done" });
+    expect(spawnClone).toHaveBeenCalledTimes(1);
+    expect(appendAuditEntry).toHaveBeenCalledTimes(1);
+    const entry = vi.mocked(appendAuditEntry).mock.calls[0][1] as { branchLength: number };
+    expect(entry.branchLength).toBe(JSON.stringify(FIXTURE_TRANSCRIPT).length);
+    expect(entry.branchLength).toBeGreaterThan(0);
   });
 });
