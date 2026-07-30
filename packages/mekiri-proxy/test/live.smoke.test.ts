@@ -78,5 +78,5 @@ describe("live smoke test", () => {
     const afterCut = JSON.parse(afterCutStdout);
 
     expect(afterCut.usage.cache_read_input_tokens).toBeGreaterThan(0);
-  }, 60000);
+  }, 180000);
 });
