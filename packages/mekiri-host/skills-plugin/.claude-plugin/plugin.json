@@ -1,5 +1,0 @@
-{
-  "name": "mekiri",
-  "description": "Mekiri-specific skills (mekiri-gate, mekiri-tuning) for agents running inside mekiri-host",
-  "version": "0.1.0"
-}
