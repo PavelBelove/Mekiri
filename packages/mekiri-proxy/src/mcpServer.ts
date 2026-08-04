@@ -1,4 +1,5 @@
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import {
   validateFruit,
   findBoundary,
@@ -58,7 +59,7 @@ interface PruneArgs {
 }
 
 type PruneResult =
-  | { status: "ok"; cut_effective_from: "next_request" }
+  | { status: "ok"; cut_effective_from: "next_request"; rule_id: string; distillate: string }
   | { status: "ambiguous"; occurrences: number }
   | { status: "not_found" }
   | { status: "in_compacted_zone"; last_compact_message_id: string }
@@ -106,25 +107,21 @@ export function createToolHandlers(context: McpServerContext) {
       const idx = filtered.findIndex((l) => l.uuid === boundary.messageId);
 
       const distillateText = renderDistillate(args.note_type, validation.fruit);
-      const rule: RewriteRule = {
-        matchQuote: args.quote,
-        replacement: [
-          { role: "user", content: "[MEKIRI PORTAL] Сверни всё до этого момента." },
-          { role: "assistant", content: distillateText },
-        ],
-      };
+      const id = randomUUID();
+      const rule: RewriteRule = { id, matchQuote: args.quote };
 
       await context.postControlRule({ sessionId: context.sessionId, dir: context.dir, rule });
       await appendAuditEntry(context.dir, {
         event: "prune",
         timestamp: new Date().toISOString(),
         sessionId: context.sessionId,
+        ruleId: id,
         noteType: args.note_type,
         removedBranchLength: JSON.stringify(filtered.slice(idx + 1)).length,
         fruitLength: distillateText.length,
       });
 
-      return { status: "ok", cut_effective_from: "next_request" };
+      return { status: "ok", cut_effective_from: "next_request", rule_id: id, distillate: distillateText };
     },
 
     async configure_mekiri(args: ConfigureArgs): Promise<ConfigureResult> {

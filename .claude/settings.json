@@ -1,5 +1,6 @@
 {
   "enabledPlugins": {
     "superpowers@superpowers-marketplace": true
-  }
+  },
+  "enabledMcpjsonServers": ["mekiri-proxy"]
 }

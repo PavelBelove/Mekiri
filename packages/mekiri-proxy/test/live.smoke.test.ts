@@ -58,16 +58,21 @@ describe("live smoke test", () => {
       );
     }
 
+    // NOTE: under the range-cut model, a rule only resolves to an actual cut
+    // when its `id` is found inside a real tool_result paired with a
+    // `prune` tool_use in the live transcript (see findPruneResultAnchor in
+    // rewriteMessages.ts). This test posts a rule directly to the daemon
+    // without driving the live agent through an actual `prune` MCP call, so
+    // there is no such anchor in turn 4's message array -- the rule below
+    // will not resolve to a cut, and this test currently only proves that
+    // caching still works when an unresolvable rule is registered, not that
+    // caching survives an *actual* cut. Exercising a real cut here would
+    // require wiring the mekiri-proxy MCP server into the live `claude`
+    // invocation and having it call `prune` for real -- left as a follow-up.
     await postControlRuleOverHttp(PORT)({
       sessionId,
       dir: process.cwd(),
-      rule: {
-        matchQuote: "ACK 2",
-        replacement: [
-          { role: "user", content: "[MEKIRI PORTAL] cut everything before this." },
-          { role: "assistant", content: "distillate: turns 1-2 were a numbering test." },
-        ],
-      },
+      rule: { id: "live-smoke-rule", matchQuote: "ACK 2" },
     });
 
     const { stdout: afterCutStdout } = await execFileAsync(

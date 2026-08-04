@@ -32,12 +32,29 @@ async function main() {
   server.registerTool(
     "prune",
     {
-      description: "Срезать хвост текущей сессии от указанной цитаты до текущего момента, заменив его на дистиллят.",
+      description:
+        "Срезать хвост текущей сессии от указанной цитаты до текущего момента, заменив его на дистиллят. " +
+        "Вызывай сразу после КАЖДОГО закрытого микро-эпизода (прочитал файл ради одного вопроса, прогнал один тест-сьют, " +
+        "получил один вердикт) -- не только в конце всей объявленной задачи и не дожидаясь накопления нескольких эпизодов.",
       inputSchema: {
-        quote: z.string(),
-        note_type: z.enum(["portal", "death_reload"]),
-        fruit: z.unknown(),
-        keep_code: z.boolean(),
+        quote: z
+          .string()
+          .describe(
+            "Дословная подстрока из УЖЕ ЗАВЕРШЁННОГО предыдущего хода (ответа ассистента), " +
+              "с этого места начинается срез. НЕ может быть текстом из текущего, ещё не отправленного сообщения."
+          ),
+        note_type: z
+          .enum(["portal", "death_reload"])
+          .describe(
+            "portal -- эпизод закрыт успешно, нужен только результат. death_reload -- тупик/неверная гипотеза, откат с уроком на будущее."
+          ),
+        fruit: z
+          .record(z.string(), z.unknown())
+          .describe(
+            "Для portal: { summary: string (обязательно), files_touched?: {path, change}[], gotchas?: string }. " +
+              "Для death_reload: { tried: string (обязательно), ruled_out: string (обязательно), facts_learned?: string, trigger?: string }."
+          ),
+        keep_code: z.boolean().describe("Сохранить ли фактические изменения кода/файлов, сделанные внутри вырезаемого диапазона (сам диапазон в контексте всё равно вырезается)."),
       },
     },
     async (args) => ({ content: [{ type: "text", text: JSON.stringify(await handlers.prune(args)) }] })

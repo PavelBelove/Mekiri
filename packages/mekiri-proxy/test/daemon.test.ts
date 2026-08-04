@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import http from "node:http";
+import net from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -86,7 +87,7 @@ describe("daemon", () => {
       {
         sessionId: "cut-session",
         dir: "/some/project",
-        rule: { matchQuote: "old reply text", replacement: [{ role: "user", content: "[distillate]" }] },
+        rule: { id: "rule-cut-1", matchQuote: "old reply text" },
       }
     );
     expect(registerResult.status).toBe(200);
@@ -96,6 +97,21 @@ describe("daemon", () => {
       messages: [
         { role: "user", content: "old turn" },
         { role: "assistant", content: [{ type: "text", text: "old reply text" }] },
+        { role: "user", content: "middle turn" },
+        {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "toolu_1", name: "prune", input: { quote: "old reply text" } }],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "toolu_1",
+              content: [{ type: "text", text: JSON.stringify({ status: "ok", rule_id: "rule-cut-1" }) }],
+            },
+          ],
+        },
         { role: "user", content: "new turn" },
       ],
       metadata: { user_id: JSON.stringify({ session_id: "cut-session" }) },
@@ -107,8 +123,119 @@ describe("daemon", () => {
     );
 
     expect(lastUpstreamBody.messages).toEqual([
-      { role: "user", content: "[distillate]" },
-      { role: "user", content: "new turn" },
+      requestBody.messages[0],
+      requestBody.messages[3],
+      requestBody.messages[4],
+      requestBody.messages[5],
     ]);
+  });
+
+  it("accumulates rules registered across multiple /control/rule calls instead of overwriting them", async () => {
+    const sessionId = "accumulate-session";
+    await jsonRequest(
+      DAEMON_PORT,
+      { path: "/control/rule", method: "POST", headers: { "content-type": "application/json" } },
+      { sessionId, dir: "/some/project", rule: { id: "rule-a", matchQuote: "quoteA" } }
+    );
+    await jsonRequest(
+      DAEMON_PORT,
+      { path: "/control/rule", method: "POST", headers: { "content-type": "application/json" } },
+      { sessionId, dir: "/some/project", rule: { id: "rule-b", matchQuote: "quoteB" } }
+    );
+
+    const requestBody = {
+      messages: [
+        { role: "user", content: "turn0" },
+        { role: "assistant", content: [{ type: "text", text: "quoteA" }] },
+        { role: "user", content: "turn2" },
+        {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "toolu_a", name: "prune", input: { quote: "quoteA" } }],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "toolu_a", content: [{ type: "text", text: JSON.stringify({ rule_id: "rule-a" }) }] },
+          ],
+        },
+        { role: "user", content: "turn5" },
+        { role: "assistant", content: [{ type: "text", text: "quoteB" }] },
+        { role: "user", content: "turn7" },
+        {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "toolu_b", name: "prune", input: { quote: "quoteB" } }],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "toolu_b", content: [{ type: "text", text: JSON.stringify({ rule_id: "rule-b" }) }] },
+          ],
+        },
+        { role: "user", content: "turn10" },
+      ],
+      metadata: { user_id: JSON.stringify({ session_id: sessionId }) },
+    };
+    await jsonRequest(
+      DAEMON_PORT,
+      { path: "/v1/messages", method: "POST", headers: { "content-type": "application/json" } },
+      requestBody
+    );
+
+    expect(lastUpstreamBody.messages).toEqual([
+      requestBody.messages[0],
+      requestBody.messages[3],
+      requestBody.messages[4],
+      requestBody.messages[5],
+      requestBody.messages[8],
+      requestBody.messages[9],
+      requestBody.messages[10],
+    ]);
+  });
+
+  it("survives a client aborting mid-request instead of crashing the daemon", async () => {
+    // A client disconnecting mid-body (Claude Code cancelling a request,
+    // network hiccup, etc.) rejects the in-flight readBody() promise. The
+    // request handler is passed straight to http.createServer, which does
+    // not await it -- an uncaught rejection there is an unhandled promise
+    // rejection, which terminates the real (non-test) process by default
+    // and would take every session sharing this daemon down with it.
+    // vitest installs its own process-level unhandledRejection listener
+    // that keeps the test runner itself alive either way, so surviving
+    // in-process isn't a real assertion here -- what we can check directly
+    // is whether the rejection escapes at all.
+    let unhandled: unknown;
+    const onUnhandledRejection = (err: unknown) => {
+      unhandled = err;
+    };
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const sock = net.connect(DAEMON_PORT, "127.0.0.1", () => {
+          sock.write(
+            "POST /v1/messages HTTP/1.1\r\n" +
+              "Host: 127.0.0.1\r\n" +
+              "Content-Type: application/json\r\n" +
+              "Content-Length: 10000\r\n" + // promise more body bytes than we ever send
+              "\r\n" +
+              "{\"messages\":"
+          );
+          setTimeout(() => {
+            sock.destroy();
+            resolve();
+          }, 100);
+        });
+        sock.on("error", reject);
+      });
+      // Give the daemon's rejected promise a tick to (not) surface.
+      await new Promise((r) => setTimeout(r, 100));
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+
+    expect(unhandled).toBeUndefined();
+
+    const { status, body } = await jsonRequest(DAEMON_PORT, { path: "/health", method: "GET" });
+    expect(status).toBe(200);
+    expect(body).toEqual({ status: "ok", service: "mekiri-proxy-daemon" });
   });
 });

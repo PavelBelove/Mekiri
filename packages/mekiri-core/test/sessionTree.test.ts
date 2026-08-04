@@ -75,6 +75,37 @@ describe("buildSessionForest", () => {
     expect(forest[0].nodes.map((n) => n.sessionId).sort()).toEqual(["a", "b"]);
   });
 
+  it("chains successive wire-level prunes (same real sessionId, distinct ruleId) into a multi-node trunk instead of colliding on one parent", () => {
+    const sessionId = "wire-session";
+    const entries: AuditEntry[] = [
+      { event: "prune", timestamp: "2026-01-01T00:00:00.000Z", sessionId, ruleId: "rule-1", noteType: "portal", removedBranchLength: 10, fruitLength: 5 },
+      { event: "prune", timestamp: "2026-01-01T00:10:00.000Z", sessionId, ruleId: "rule-2", noteType: "portal", removedBranchLength: 20, fruitLength: 8 },
+      { event: "prune", timestamp: "2026-01-01T00:20:00.000Z", sessionId, ruleId: "rule-3", noteType: "portal", removedBranchLength: 30, fruitLength: 12 },
+    ];
+    const forest = buildSessionForest(entries);
+    expect(forest).toHaveLength(1);
+    expect(forest[0].rootSessionId).toBe(sessionId);
+    const trunk = findPruneTrunk(forest[0]);
+    expect(trunk).toHaveLength(3);
+    expect(trunk[0].sessionId).toBe(`${sessionId}#rule-1`);
+    expect(trunk[0].parentSessionId).toBe(sessionId);
+    expect(trunk[1].sessionId).toBe(`${sessionId}#rule-2`);
+    expect(trunk[1].parentSessionId).toBe(`${sessionId}#rule-1`);
+    expect(trunk[2].sessionId).toBe(`${sessionId}#rule-3`);
+    expect(trunk[2].parentSessionId).toBe(`${sessionId}#rule-2`);
+  });
+
+  it("attaches a sprout after wire-level prunes to the current synthetic tip, not the original sessionId", () => {
+    const sessionId = "wire-session";
+    const entries: AuditEntry[] = [
+      { event: "prune", timestamp: "2026-01-01T00:00:00.000Z", sessionId, ruleId: "rule-1", noteType: "portal", removedBranchLength: 10, fruitLength: 5 },
+      sproutEntry(sessionId, "clone1", "2026-01-01T00:15:00.000Z"),
+    ];
+    const forest = buildSessionForest(entries);
+    const cloneNode = forest[0].nodes.find((n) => n.sessionId === "clone1");
+    expect(cloneNode?.parentSessionId).toBe(`${sessionId}#rule-1`);
+  });
+
   it("throws instead of hanging when the audit log contains a cycle", () => {
     const entries: AuditEntry[] = [
       pruneEntry("root", "a", "2026-01-01T00:00:00.000Z"),

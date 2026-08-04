@@ -44,6 +44,18 @@ describe("validateFruit", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("prefixes the field path onto the Zod validation error instead of a bare message", () => {
+    const result = validateFruit({
+      noteType: "portal",
+      fruit: {},
+      keepCode: false,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors[0]).toMatch(/^summary: /);
+    }
+  });
+
   it("accepts a death_reload fruit with tried and ruled_out", () => {
     const result = validateFruit({
       noteType: "death_reload",

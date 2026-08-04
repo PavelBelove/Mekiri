@@ -29,11 +29,18 @@ export type ValidateFruitResult =
   | { ok: true; fruit: PortalFruit | DeathReloadFruit }
   | { ok: false; errors: string[] };
 
+function formatIssues(error: z.ZodError): string[] {
+  return error.issues.map((issue) => {
+    const path = issue.path.join(".");
+    return path ? `${path}: ${issue.message}` : issue.message;
+  });
+}
+
 export function validateFruit(args: ValidateFruitArgs): ValidateFruitResult {
   if (args.noteType === "portal") {
     const parsed = PortalFruitSchema.safeParse(args.fruit);
     if (!parsed.success) {
-      return { ok: false, errors: parsed.error.issues.map((issue) => issue.message) };
+      return { ok: false, errors: formatIssues(parsed.error) };
     }
     if (args.keepCode && !parsed.data.files_touched) {
       return { ok: false, errors: ["files_touched is required when keep_code is true"] };
@@ -43,7 +50,7 @@ export function validateFruit(args: ValidateFruitArgs): ValidateFruitResult {
 
   const parsed = DeathReloadFruitSchema.safeParse(args.fruit);
   if (!parsed.success) {
-    return { ok: false, errors: parsed.error.issues.map((issue) => issue.message) };
+    return { ok: false, errors: formatIssues(parsed.error) };
   }
   return { ok: true, fruit: parsed.data };
 }

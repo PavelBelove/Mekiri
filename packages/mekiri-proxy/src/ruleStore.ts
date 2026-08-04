@@ -5,7 +5,7 @@ import type { RewriteRule } from "./rewriteMessages.js";
 
 export interface StoredRuleEntry {
   dir: string;
-  rule: RewriteRule;
+  rules: RewriteRule[];
   updatedAt: string;
 }
 
@@ -23,18 +23,32 @@ function rulesFilePath(): string {
   return path.join(resolveStateDir(), "rules.json");
 }
 
+// Defensive per-entry: an old-format entry (pre-cumulative-rules, keyed by
+// `.rule` instead of `.rules`) must not crash the daemon on startup -- this
+// file is dev-only, session-lifetime state, so there's no migration, just
+// graceful degradation to an empty rule list for that one session.
 export async function loadAllRules(): Promise<Record<string, StoredRuleEntry>> {
   try {
     const raw = await fs.readFile(rulesFilePath(), "utf8");
-    return JSON.parse(raw) as Record<string, StoredRuleEntry>;
+    const parsed = JSON.parse(raw) as Record<string, Partial<StoredRuleEntry>>;
+    const result: Record<string, StoredRuleEntry> = {};
+    for (const [sessionId, entry] of Object.entries(parsed)) {
+      result[sessionId] = {
+        dir: entry.dir ?? "",
+        rules: Array.isArray(entry.rules) ? entry.rules : [],
+        updatedAt: entry.updatedAt ?? new Date(0).toISOString(),
+      };
+    }
+    return result;
   } catch {
     return {};
   }
 }
 
-export async function saveRule(sessionId: string, dir: string, rule: RewriteRule): Promise<void> {
+export async function appendRule(sessionId: string, dir: string, rule: RewriteRule): Promise<void> {
   const all = await loadAllRules();
-  all[sessionId] = { dir, rule, updatedAt: new Date().toISOString() };
+  const existing = all[sessionId]?.rules ?? [];
+  all[sessionId] = { dir, rules: [...existing, rule], updatedAt: new Date().toISOString() };
   await fs.mkdir(resolveStateDir(), { recursive: true });
   await fs.writeFile(rulesFilePath(), JSON.stringify(all, null, 2), "utf8");
 }

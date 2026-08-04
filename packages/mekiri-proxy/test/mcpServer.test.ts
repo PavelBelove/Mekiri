@@ -39,10 +39,42 @@ describe("prune handler", () => {
       keep_code: false,
     });
 
-    expect(result).toEqual({ status: "ok", cut_effective_from: "next_request" });
+    expect(result.status).toBe("ok");
+    expect(result).toMatchObject({ cut_effective_from: "next_request" });
+    if (result.status !== "ok") throw new Error("unreachable");
+    expect(typeof result.rule_id).toBe("string");
+    expect(result.distillate).toContain("found the answer");
+
     expect(postControlRule).toHaveBeenCalledTimes(1);
     expect(postControlRule.mock.calls[0][0].sessionId).toBe("s1");
-    expect(postControlRule.mock.calls[0][0].rule.replacement[1].content).toContain("found the answer");
+    expect(postControlRule.mock.calls[0][0].rule).toEqual({ id: result.rule_id, matchQuote: "the answer is 42" });
+  });
+
+  it("generates a distinct rule_id for each prune call", async () => {
+    const postControlRule = vi.fn(async () => {});
+    const handlers = createToolHandlers({
+      sessionId: "s1",
+      dir: "/proj",
+      depth: 0,
+      daemonPort: 8791,
+      postControlRule,
+    });
+
+    const first = await handlers.prune({
+      quote: "the answer is 42",
+      note_type: "portal",
+      fruit: { summary: "first" },
+      keep_code: false,
+    });
+    const second = await handlers.prune({
+      quote: "the answer is 42",
+      note_type: "portal",
+      fruit: { summary: "second" },
+      keep_code: false,
+    });
+
+    if (first.status !== "ok" || second.status !== "ok") throw new Error("unreachable");
+    expect(first.rule_id).not.toBe(second.rule_id);
   });
 
   it("returns invalid_fruit without calling the daemon when fruit fails validation", async () => {

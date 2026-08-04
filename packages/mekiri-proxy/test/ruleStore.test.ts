@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -22,22 +22,49 @@ describe("ruleStore", () => {
   });
 
   it("persists and reloads a rule keyed by sessionId", async () => {
-    const { saveRule, loadAllRules } = await import("../src/ruleStore.js");
-    const rule = { matchQuote: "some quoted text", replacement: [{ role: "user" as const, content: "note" }] };
-    await saveRule("session-abc", "/some/project", rule);
+    const { appendRule, loadAllRules } = await import("../src/ruleStore.js");
+    const rule = { id: "rule-1", matchQuote: "some quoted text" };
+    await appendRule("session-abc", "/some/project", rule);
 
     const all = await loadAllRules();
-    expect(all["session-abc"].rule).toEqual(rule);
+    expect(all["session-abc"].rules).toEqual([rule]);
     expect(all["session-abc"].dir).toBe("/some/project");
     expect(typeof all["session-abc"].updatedAt).toBe("string");
   });
 
   it("preserves previously saved rules for other sessions", async () => {
-    const { saveRule, loadAllRules } = await import("../src/ruleStore.js");
-    await saveRule("session-a", "/proj-a", { matchQuote: "some quoted text", replacement: [] });
-    await saveRule("session-b", "/proj-b", { matchQuote: "other quoted text", replacement: [] });
+    const { appendRule, loadAllRules } = await import("../src/ruleStore.js");
+    await appendRule("session-a", "/proj-a", { id: "rule-a", matchQuote: "some quoted text" });
+    await appendRule("session-b", "/proj-b", { id: "rule-b", matchQuote: "other quoted text" });
 
     const all = await loadAllRules();
     expect(Object.keys(all).sort()).toEqual(["session-a", "session-b"]);
+  });
+
+  it("accumulates rules for the same session across multiple appendRule calls", async () => {
+    const { appendRule, loadAllRules } = await import("../src/ruleStore.js");
+    const ruleOne = { id: "rule-1", matchQuote: "first quote" };
+    const ruleTwo = { id: "rule-2", matchQuote: "second quote" };
+    await appendRule("session-abc", "/some/project", ruleOne);
+    await appendRule("session-abc", "/some/project", ruleTwo);
+
+    const all = await loadAllRules();
+    expect(all["session-abc"].rules).toEqual([ruleOne, ruleTwo]);
+  });
+
+  it("does not crash on an old-format entry keyed by .rule instead of .rules", async () => {
+    const rulesFile = path.join(stateDir, "rules.json");
+    writeFileSync(
+      rulesFile,
+      JSON.stringify({
+        "old-session": { dir: "/old/project", rule: { matchQuote: "x", replacement: [] }, updatedAt: "2026-01-01T00:00:00.000Z" },
+      }),
+      "utf8"
+    );
+
+    const { loadAllRules } = await import("../src/ruleStore.js");
+    const all = await loadAllRules();
+    expect(all["old-session"].rules).toEqual([]);
+    expect(all["old-session"].dir).toBe("/old/project");
   });
 });

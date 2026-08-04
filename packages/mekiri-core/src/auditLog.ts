@@ -10,6 +10,11 @@ export interface PruneAuditEntry {
    *  that model never creates a new session, only mekiri-host's session-fork
    *  model does. */
   newSessionId?: string;
+  /** The RewriteRule.id generated for this cut by mekiri-proxy's prune()
+   *  handler. Present for wire-level prunes (where newSessionId is absent) --
+   *  used to synthesize a session-tree node for what never forked a real
+   *  session. Absent for mekiri-host prunes, which already have newSessionId. */
+  ruleId?: string;
   noteType: NoteType;
   /** Length in characters of the removed branch content — a Phase 1 proxy metric.
    *  Real token counts require live SDK usage data (see mekiri-host plan). */

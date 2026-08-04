@@ -14,16 +14,39 @@ export interface SessionTree {
   nodes: SessionNode[];
 }
 
-function nodeFromEntry(entry: AuditEntry): SessionNode | undefined {
+/**
+ * Tracks, per real sessionId, the current "tip" of that session's lineage --
+ * either the real sessionId itself (nothing pruned yet) or the synthetic
+ * pseudo-sessionId of its most recent wire-level prune. Wire-level prunes
+ * (mekiri-proxy) never fork a real session -- entry.sessionId stays constant
+ * across a whole chain of them -- so without this, a second wire-level prune
+ * in the same session would claim the same parentSessionId as the first,
+ * violating findPruneTrunk's single-prune-child invariant.
+ */
+function nodeFromEntry(entry: AuditEntry, tipBySessionId: Map<string, string>): SessionNode | undefined {
   if (entry.event === "prune") {
-    // Wire-level prunes (mekiri-proxy) rewrite the request for the same
-    // session and never fork a new one, so entry.newSessionId is absent.
-    // With no new session there is no fork edge to add to the tree --
-    // treat it the same as the other non-tree event types below.
-    if (entry.newSessionId === undefined) return undefined;
+    // mekiri-host prunes fork a genuinely new, real session -- no tip
+    // tracking needed, same as before.
+    if (entry.newSessionId !== undefined) {
+      return {
+        sessionId: entry.newSessionId,
+        parentSessionId: entry.sessionId,
+        branchType: "prune",
+        timestamp: entry.timestamp,
+        removedOrBranchLength: entry.removedBranchLength,
+        fruitOrHarvestLength: entry.fruitLength,
+      };
+    }
+    // Wire-level prune with no forked session. Without a ruleId there is no
+    // stable anchor to synthesize a node from (pre-migration audit entries) --
+    // treat it the same as other non-tree event types below.
+    if (entry.ruleId === undefined) return undefined;
+    const parentSessionId = tipBySessionId.get(entry.sessionId) ?? entry.sessionId;
+    const syntheticSessionId = `${entry.sessionId}#${entry.ruleId}`;
+    tipBySessionId.set(entry.sessionId, syntheticSessionId);
     return {
-      sessionId: entry.newSessionId,
-      parentSessionId: entry.sessionId,
+      sessionId: syntheticSessionId,
+      parentSessionId,
       branchType: "prune",
       timestamp: entry.timestamp,
       removedOrBranchLength: entry.removedBranchLength,
@@ -31,9 +54,12 @@ function nodeFromEntry(entry: AuditEntry): SessionNode | undefined {
     };
   }
   if (entry.event === "sprout") {
+    // If this session has already been wire-level pruned, the sprout forks
+    // from the current (post-cut) tip, not the stale original sessionId.
+    const parentSessionId = tipBySessionId.get(entry.sessionId) ?? entry.sessionId;
     return {
       sessionId: entry.childSessionId,
-      parentSessionId: entry.sessionId,
+      parentSessionId,
       branchType: "sprout",
       timestamp: entry.timestamp,
       removedOrBranchLength: entry.branchLength,
@@ -54,9 +80,12 @@ function nodeFromEntry(entry: AuditEntry): SessionNode | undefined {
  * lifetime) are the normal case, not an edge case.
  */
 export function buildSessionForest(entries: AuditEntry[]): SessionTree[] {
+  // entries is append-only .jsonl, already in chronological order -- this
+  // single pass relies on that ordering to keep tipBySessionId accurate.
+  const tipBySessionId = new Map<string, string>();
   const allNodes: SessionNode[] = [];
   for (const entry of entries) {
-    const node = nodeFromEntry(entry);
+    const node = nodeFromEntry(entry, tipBySessionId);
     if (node) allNodes.push(node);
   }
 
