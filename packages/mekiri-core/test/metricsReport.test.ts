@@ -264,11 +264,12 @@ describe("computeProjectReport", () => {
     }
   });
 
-  it("excludes a wire-level prune entry (no newSessionId) from pruneCount and tree metrics", async () => {
+  it("excludes a pre-migration wire-level prune entry (no newSessionId, no ruleId) from pruneCount and tree metrics", async () => {
     // Mixes a host-style prune (has newSessionId, forks a tree node) with a
-    // wire-level prune (mekiri-proxy, no newSessionId, no fork) in the same
-    // audit log. The wire-level entry must not crash computeProjectReport,
-    // must not appear as a tree node, and must not be counted in pruneCount.
+    // pre-ruleId-migration wire-level prune (no newSessionId, no ruleId --
+    // no stable anchor to synthesize a node from) in the same audit log.
+    // That entry must not crash computeProjectReport, must not appear as a
+    // tree node, and must not be counted in pruneCount.
     const { appendAuditEntry } = await import("../src/auditLog.js");
     const realProjectDir = await mkdtemp(path.join(tmpdir(), "mekiri-core-wire-prune-project-"));
     try {
@@ -294,6 +295,52 @@ describe("computeProjectReport", () => {
       expect(report.trees).toHaveLength(1);
       expect(report.trees[0].rootSessionId).toBe("root");
       expect(report.trees[0].pruneCount).toBe(1);
+      expect(report.trees[0].pruneSavings).toHaveLength(1);
+      expect(report.trees[0].pruneSavings[0].newSessionId).toBe("a");
+    } finally {
+      await rm(realProjectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("counts a real wire-level prune entry (has ruleId, no newSessionId) in pruneCount and averageDistillationRatio", async () => {
+    // This is what mekiri-proxy's actual prune() handler writes today (see
+    // mcpServer.ts): sessionId stays constant, no newSessionId, but ruleId
+    // is always set. buildSessionForest already turns this into a synthetic
+    // `${sessionId}#${ruleId}` tree node -- computeProjectReport's own
+    // treeEntries filter must recognize that same node, not just the
+    // newSessionId case, or real wire-level activity silently reads as zero.
+    const { appendAuditEntry } = await import("../src/auditLog.js");
+    const realProjectDir = await mkdtemp(path.join(tmpdir(), "mekiri-core-wire-prune-ruleid-project-"));
+    try {
+      await appendAuditEntry(realProjectDir, {
+        event: "prune",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        sessionId: "root",
+        newSessionId: "a",
+        noteType: "portal",
+        removedBranchLength: 500,
+        fruitLength: 50,
+      });
+      await appendAuditEntry(realProjectDir, {
+        event: "prune",
+        timestamp: "2026-01-01T00:30:00.000Z",
+        sessionId: "a",
+        ruleId: "rule-1",
+        noteType: "portal",
+        removedBranchLength: 200,
+        fruitLength: 10,
+      });
+
+      const report = await computeProjectReport(realProjectDir);
+      expect(report.trees).toHaveLength(1);
+      expect(report.trees[0].rootSessionId).toBe("root");
+      expect(report.trees[0].pruneCount).toBe(2);
+      // (500/50 + 200/10) / 2 = (10 + 20) / 2 = 15
+      expect(report.trees[0].averageDistillationRatio).toBeCloseTo(15, 5);
+      // Wire-level prune still has no forked session to measure
+      // subsequent-request savings against, so it's still excluded here --
+      // that half of the fix (computeLifetimeTokenSavingsForTree) is
+      // intentionally unchanged.
       expect(report.trees[0].pruneSavings).toHaveLength(1);
       expect(report.trees[0].pruneSavings[0].newSessionId).toBe("a");
     } finally {

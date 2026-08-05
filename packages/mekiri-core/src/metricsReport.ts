@@ -129,6 +129,18 @@ function average(values: number[]): number {
   return values.reduce((sum, v) => sum + v, 0) / values.length;
 }
 
+/**
+ * The session-tree node id a prune entry produced, mirroring sessionTree.ts's
+ * nodeFromEntry: mekiri-host prunes use their real newSessionId, wire-level
+ * (mekiri-proxy) prunes use the synthetic `${sessionId}#${ruleId}` id. Pre-migration
+ * entries with neither field produced no node and are excluded here too.
+ */
+function pruneEntryNodeId(entry: PruneAuditEntry): string | undefined {
+  if (entry.newSessionId !== undefined) return entry.newSessionId;
+  if (entry.ruleId !== undefined) return `${entry.sessionId}#${entry.ruleId}`;
+  return undefined;
+}
+
 export interface TreeMetricsReport {
   rootSessionId: string;
   pruneCount: number;
@@ -153,11 +165,13 @@ export async function computeProjectReport(dir: string): Promise<ProjectMetricsR
   const trees: TreeMetricsReport[] = [];
   for (const tree of forest) {
     const nodeIds = new Set(tree.nodes.map((n) => n.sessionId));
-    const treeEntries = entries.filter(
-      (e): e is PruneAuditEntry | SproutAuditEntry =>
-        (e.event === "prune" && e.newSessionId !== undefined && nodeIds.has(e.newSessionId)) ||
-        (e.event === "sprout" && nodeIds.has(e.childSessionId)),
-    );
+    const treeEntries = entries.filter((e): e is PruneAuditEntry | SproutAuditEntry => {
+      if (e.event === "prune") {
+        const nodeId = pruneEntryNodeId(e);
+        return nodeId !== undefined && nodeIds.has(nodeId);
+      }
+      return e.event === "sprout" && nodeIds.has(e.childSessionId);
+    });
     const pruneEntries = treeEntries.filter((e): e is PruneAuditEntry => e.event === "prune");
     const sproutEntries = treeEntries.filter((e): e is SproutAuditEntry => e.event === "sprout");
 
