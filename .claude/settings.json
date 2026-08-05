@@ -2,5 +2,18 @@
   "enabledPlugins": {
     "superpowers@superpowers-marketplace": true
   },
-  "enabledMcpjsonServers": ["mekiri-proxy"]
+  "enabledMcpjsonServers": ["mekiri-proxy"],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --experimental-strip-types \"$CLAUDE_PROJECT_DIR/packages/mekiri-proxy/bin/nudge-hook.ts\""
+          }
+        ]
+      }
+    ]
+  }
 }
