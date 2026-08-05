@@ -12,8 +12,9 @@ import {
   readReportRange,
   readCapsule,
   findCapsuleEntry,
+  computeProjectReport,
 } from "mekiri-core";
-import type { NoteType, PortalFruit, DeathReloadFruit, MekiriConfig } from "mekiri-core";
+import type { NoteType, PortalFruit, DeathReloadFruit, MekiriConfig, TreeMetricsReport, ProjectMetricsReport } from "mekiri-core";
 import type { RewriteRule } from "./rewriteMessages.js";
 import { spawnClone } from "./spawnClone.js";
 
@@ -115,6 +116,15 @@ interface GraftArgs {
 type GraftResult =
   | { status: "ok"; mode: "toc"; content: string }
   | { status: "ok"; mode: "full"; content: string }
+  | { status: "not_found" };
+
+interface MetricsArgs {
+  scope?: "session" | "project";
+}
+
+type MetricsResult =
+  | { status: "ok"; scope: "session"; report: TreeMetricsReport }
+  | { status: "ok"; scope: "project"; report: ProjectMetricsReport }
   | { status: "not_found" };
 
 export function createToolHandlers(context: McpServerContext) {
@@ -243,6 +253,23 @@ export function createToolHandlers(context: McpServerContext) {
       });
 
       return { status: "ok", mode: "full", content };
+    },
+
+    async metrics(args: MetricsArgs): Promise<MetricsResult> {
+      const projectReport = await computeProjectReport(context.dir);
+
+      if (args.scope === "project") {
+        return { status: "ok", scope: "project", report: projectReport };
+      }
+
+      // Wire-level prune (mekiri-proxy) never forks the running session, so
+      // context.sessionId is always the real, stable id -- and always equal
+      // to its own tree's rootSessionId (only sprout children get a
+      // different real sessionId, as childSessionId, never the running
+      // session itself).
+      const tree = projectReport.trees.find((t) => t.rootSessionId === context.sessionId);
+      if (!tree) return { status: "not_found" };
+      return { status: "ok", scope: "session", report: tree };
     },
 
     async configure_mekiri(args: ConfigureArgs): Promise<ConfigureResult> {

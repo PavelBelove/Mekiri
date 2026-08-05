@@ -195,6 +195,20 @@ graft(
 - Когда `callsSinceReset` достигает `threshold`, хук отдаёт мягкий `additionalContext` (текст напоминания, эскалирующийся по тону на 2-м и 3-м+ подряд срабатывании без сброса) через `hookSpecificOutput`.
 - После `HARD_BLOCK_AFTER = 3` подряд проигнорированных напоминаний (без единого реального Mekiri-вызова между ними) хук вместо совета отдаёт `{ decision: "block", reason }` — самый сильный сигнал, который умеет PostToolUse (это обратная связь агенту, не отмена уже выполненного вызова тулзы), и продолжает блокировать каждый следующий не-Mekiri вызов, пока состояние не сбросится реальным вызовом Mekiri-тулзы.
 
+### 6.7. `metrics(scope?)`
+
+```
+metrics(
+  scope?: "session" | "project"  # по умолчанию "session"
+)
+```
+
+Тонкая обёртка над `computeProjectReport` (см. §12.2) — без неё числа по эффективности отката/форка были видны только через одноразовый скрипт, читающий mekiri-core напрямую, что и обнаружилось при первом реальном запросе метрик в рамках дневного дизайн-сеанса.
+
+- `scope: "session"` (по умолчанию) — дерево, чей `rootSessionId` совпадает с `sessionId` текущего вызова. Проводной (wire-level) `prune`, в отличие от форка `mekiri-host`, никогда не меняет реальный `sessionId` текущей сессии — поэтому `rootSessionId` собственного дерева всегда равен ему напрямую, без обхода узлов. Если для этой сессии ещё нет ни одной записи в `audit.jsonl` (ничего не откатывали и не форкали) — `{ status: "not_found" }`.
+- `scope: "project"` — все деревья сессий проекта разом (`ProjectMetricsReport.trees`), для сравнения между сессиями или ретроспективы за более долгий период.
+- Возвращает `TreeMetricsReport` (или массив таких отчётов для `project`): `pruneCount`, `sproutCount`, `averageDistillationRatio`, `averageBranchCompression`, `totalLifetimeTokenSavings`, `totalContextProduced`, `contextRecyclingRatio`, `virtualContextLifetime`. Подробности каждого поля и формулы — §12.2.
+
 ---
 
 ## 7. Скиллы: когда что применять

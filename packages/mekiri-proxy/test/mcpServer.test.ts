@@ -1,9 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
+import { promises as fsp } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createToolHandlers } from "../src/mcpServer.js";
 import { spawnClone } from "../src/spawnClone.js";
+import type { AuditEntry } from "mekiri-core";
+
+// appendAuditEntry is mocked to a no-op above, so handler calls in these
+// tests never actually write to disk -- metrics tests that need real
+// audit.jsonl history append it directly with this helper instead, bypassing
+// the mock the same way a real prior session's audit log would exist.
+async function writeAuditEntries(dir: string, entries: AuditEntry[]): Promise<void> {
+  const filePath = path.join(dir, ".mekiri", "audit.jsonl");
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  await fsp.appendFile(filePath, entries.map((e) => `${JSON.stringify(e)}\n`).join(""), "utf8");
+}
 
 const FIXTURE_TRANSCRIPT = [
   { type: "user", uuid: "u1", message: { role: "user", content: [{ type: "text", text: "hello" }] } },
@@ -318,5 +330,46 @@ describe("graft handler", () => {
     expect(crossSessionGraft.mode).toBe("full");
     expect(crossSessionGraft.content).toContain("snapshot tagged from session s1");
     expect(crossSessionGraft.content).toContain(`session s1`);
+  });
+});
+
+describe("metrics handler", () => {
+  it("returns not_found for the default session scope when the project has no audit history yet", async () => {
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    const result = await handlers.metrics({});
+
+    expect(result).toEqual({ status: "not_found" });
+  });
+
+  it("scopes to the calling session's own tree by default, and not_found for a session with no history", async () => {
+    await writeAuditEntries(projectDir, [
+      { event: "prune", timestamp: "2026-01-01T00:00:00.000Z", sessionId: "s1", ruleId: "r1", noteType: "portal", removedBranchLength: 500, fruitLength: 50 },
+    ]);
+    const handlersS1 = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+    const handlersOther = createToolHandlers({ sessionId: "other", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    const result = await handlersS1.metrics({});
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok" || result.scope !== "session") throw new Error("unreachable");
+    expect(result.report.rootSessionId).toBe("s1");
+    expect(result.report.pruneCount).toBe(1);
+    expect(result.report.sproutCount).toBe(0);
+
+    expect(await handlersOther.metrics({})).toEqual({ status: "not_found" });
+  });
+
+  it("returns every session tree in the project for scope='project'", async () => {
+    await writeAuditEntries(projectDir, [
+      { event: "prune", timestamp: "2026-01-01T00:00:00.000Z", sessionId: "s1", ruleId: "r1", noteType: "portal", removedBranchLength: 500, fruitLength: 50 },
+      { event: "sprout", timestamp: "2026-01-01T00:01:00.000Z", sessionId: "s2", childSessionId: "s2-child", branchLength: 300, harvestLength: 30 },
+    ]);
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    const result = await handlers.metrics({ scope: "project" });
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok" || result.scope !== "project") throw new Error("unreachable");
+    expect(result.report.trees.map((t) => t.rootSessionId).sort()).toEqual(["s1", "s2"]);
   });
 });

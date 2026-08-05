@@ -116,6 +116,19 @@ async function main() {
     async (args) => ({ content: [{ type: "text", text: JSON.stringify(await handlers.graft(args)) }] })
   );
 
+  server.registerTool(
+    "metrics",
+    {
+      description:
+        "Показать метрики эффективности Mekiri: сколько раз prune/sprout вызывались, во сколько раз дистиллят короче " +
+        "вырезанного текста (distillationRatio), сжатие тёплого форка (branchCompression), доля произведённого " +
+        "контекста, вернувшаяся дистиллятом в ствол (contextRecyclingRatio). Без scope или scope='session' -- дерево " +
+        "текущей сессии. scope='project' -- все деревья сессий этого проекта разом.",
+      inputSchema: { scope: z.enum(["session", "project"]).optional().describe("session (по умолчанию) -- метрики только текущей сессии. project -- по всем сессиям проекта.") },
+    },
+    async (args) => ({ content: [{ type: "text", text: JSON.stringify(await handlers.metrics(args)) }] })
+  );
+
   await server.connect(new StdioServerTransport());
 }
 
