@@ -1,13 +1,7 @@
 import { z } from "zod";
 
-const ParallelismSchema = z.discriminatedUnion("mode", [
-  z.object({ mode: z.literal("single") }),
-  z.object({ mode: z.literal("parallel"), count: z.number().int().min(1) }),
-]);
-
 const SproutSchema = z.object({
   depth_limit: z.number().int().min(0).default(1),
-  parallelism: ParallelismSchema.default({ mode: "single" }),
   wait_mode: z.enum(["sync", "async"]).default("sync"),
 });
 

@@ -22,7 +22,7 @@ describe("config store", () => {
   });
 
   it("round-trips a saved config", async () => {
-    const config = { ...defaultConfig(), sprout: { depth_limit: 2, parallelism: { mode: "single" as const }, wait_mode: "sync" as const } };
+    const config = { ...defaultConfig(), sprout: { depth_limit: 2, wait_mode: "sync" as const } };
     await saveConfig(projectDir, config);
     const loaded = await loadConfig(projectDir);
     expect(loaded).toEqual(config);

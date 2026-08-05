@@ -32,12 +32,14 @@ async function main(): Promise<void> {
   const statePath = path.join(dir, ".mekiri", "hook-state", `${input.session_id}.json`);
 
   const state = await loadState(statePath);
-  const { nextState, additionalContext } = decideNudge(state, input.tool_name);
+  const { nextState, additionalContext, block } = decideNudge(state, input.tool_name);
 
   await fs.mkdir(path.dirname(statePath), { recursive: true });
   await fs.writeFile(statePath, JSON.stringify(nextState), "utf8");
 
-  if (additionalContext !== undefined) {
+  if (block !== undefined) {
+    process.stdout.write(JSON.stringify({ decision: "block", reason: block.reason }));
+  } else if (additionalContext !== undefined) {
     process.stdout.write(
       JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } }),
     );

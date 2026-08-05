@@ -62,6 +62,43 @@ describe("nudge-hook CLI", () => {
     expect(state.callsSinceReset).toBe(0);
   });
 
+  it("emits a decision:block once consecutiveIgnored is already at the hard-block threshold", async () => {
+    workDir = await fs.mkdtemp(path.join(tmpdir(), "nudge-hook-test-"));
+    const sessionId = "session-blocked";
+    const statePath = path.join(workDir, ".mekiri", "hook-state", `${sessionId}.json`);
+    await fs.mkdir(path.dirname(statePath), { recursive: true });
+    await fs.writeFile(statePath, JSON.stringify({ callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3 }), "utf8");
+
+    const { stdout, exitCode } = await runHook({ session_id: sessionId, tool_name: "Read" }, workDir);
+
+    expect(exitCode).toBe(0);
+    const parsed = JSON.parse(stdout);
+    expect(parsed.decision).toBe("block");
+    expect(parsed.reason).toContain("Mekiri");
+
+    const state = JSON.parse(await fs.readFile(statePath, "utf8"));
+    expect(state.consecutiveIgnored).toBe(3);
+  });
+
+  it("clears a stored hard block once a real mekiri tool call comes through", async () => {
+    workDir = await fs.mkdtemp(path.join(tmpdir(), "nudge-hook-test-"));
+    const sessionId = "session-unblock";
+    const statePath = path.join(workDir, ".mekiri", "hook-state", `${sessionId}.json`);
+    await fs.mkdir(path.dirname(statePath), { recursive: true });
+    await fs.writeFile(statePath, JSON.stringify({ callsSinceReset: 0, threshold: 7, consecutiveIgnored: 4 }), "utf8");
+
+    const { stdout, exitCode } = await runHook(
+      { session_id: sessionId, tool_name: "mcp__mekiri-proxy__prune" },
+      workDir,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe("");
+
+    const state = JSON.parse(await fs.readFile(statePath, "utf8"));
+    expect(state.consecutiveIgnored).toBe(0);
+  });
+
   it("silently exits 0 on malformed stdin", async () => {
     const { stdout, exitCode } = await new Promise<{ stdout: string; exitCode: number | null }>((resolve, reject) => {
       const child = spawn(process.execPath, ["--experimental-strip-types", HOOK_BIN], { stdio: ["pipe", "pipe", "pipe"] });

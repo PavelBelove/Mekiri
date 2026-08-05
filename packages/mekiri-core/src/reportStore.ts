@@ -22,8 +22,8 @@ export interface ReportEntryMeta {
 }
 
 // Serializes concurrent recordDistillate calls behind an in-module
-// promise-chain mutex, keyed by resolved `dir` path. sprout.parallelism.count
-// > 1 means real concurrent writers are possible; without this, the
+// promise-chain mutex, keyed by resolved `dir` path. Concurrent sprout/prune
+// calls mean real concurrent writers are possible; without this, the
 // read-line-count-then-append step would race and both interleave appends
 // and corrupt the "no gap, no overlap" line-range guarantee callers rely on.
 const mutexChains = new Map<string, Promise<void>>();
@@ -74,7 +74,7 @@ export async function recordDistillate(
 ): Promise<{ startLine: number; endLine: number }> {
   // Keyed by project `dir` alone (not `dir`+sessionId): capsule-index.jsonl
   // stays a single project-wide file even though report.md/capsule.md are
-  // now per-session, so cross-session writers (sprout.parallelism.count > 1)
+  // now per-session, so cross-session writers (concurrent sprout calls)
   // must still serialize against each other on that shared file.
   return withDirMutex(dir, async () => {
     const reportPath = sessionReportPath(dir, meta.sessionId);

@@ -2,7 +2,7 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 import {
   validateFruit,
-  findBoundary,
+  resolveBoundaryWithRetry,
   readSessionTranscript,
   loadConfig,
   applyConfigPatch,
@@ -125,8 +125,10 @@ export function createToolHandlers(context: McpServerContext) {
         return { status: "invalid_fruit", errors: validation.errors };
       }
 
-      const transcript = await readSessionTranscript(context.dir, context.sessionId);
-      const boundary = findBoundary(transcript, args.quote);
+      const { transcript, boundary } = await resolveBoundaryWithRetry(
+        () => readSessionTranscript(context.dir, context.sessionId),
+        args.quote,
+      );
       if (boundary.status === "not_found") return { status: "not_found" };
       if (boundary.status === "ambiguous") return { status: "ambiguous", occurrences: boundary.occurrences };
       if (boundary.status === "in_compacted_zone") {
@@ -176,8 +178,10 @@ export function createToolHandlers(context: McpServerContext) {
       // Same boundary lookup as prune -- proves the quote is a real, unambiguous
       // position in the transcript -- but tag never posts a rewrite rule: the
       // marked range stays live in context, this only anchors+measures it.
-      const transcript = await readSessionTranscript(context.dir, context.sessionId);
-      const boundary = findBoundary(transcript, args.quote);
+      const { transcript, boundary } = await resolveBoundaryWithRetry(
+        () => readSessionTranscript(context.dir, context.sessionId),
+        args.quote,
+      );
       if (boundary.status === "not_found") return { status: "not_found" };
       if (boundary.status === "ambiguous") return { status: "ambiguous", occurrences: boundary.occurrences };
       if (boundary.status === "in_compacted_zone") {
