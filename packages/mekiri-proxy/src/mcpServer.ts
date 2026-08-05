@@ -8,6 +8,10 @@ import {
   applyConfigPatch,
   saveConfig,
   appendAuditEntry,
+  recordDistillate,
+  readReportRange,
+  readCapsule,
+  findCapsuleEntry,
 } from "mekiri-core";
 import type { NoteType, PortalFruit, DeathReloadFruit, MekiriConfig } from "mekiri-core";
 import type { RewriteRule } from "./rewriteMessages.js";
@@ -51,6 +55,16 @@ function renderDistillate(noteType: NoteType, fruit: PortalFruit | DeathReloadFr
   return parts.join("\n");
 }
 
+/** First line of the relevant fruit field (`summary` for portal, `tried` for
+ *  death_reload), trimmed and collapsed to a single line, truncated to ~80
+ *  chars -- used as the human-readable label in capsule.md. Shared by `tag`
+ *  and the `prune` handler's report-store write. */
+function deriveHeader(noteType: NoteType, fruit: PortalFruit | DeathReloadFruit): string {
+  const raw = noteType === "portal" ? (fruit as PortalFruit).summary : (fruit as DeathReloadFruit).tried;
+  const firstLine = raw.split(/\r?\n/)[0].trim();
+  return firstLine.length > 80 ? firstLine.slice(0, 80) : firstLine;
+}
+
 interface PruneArgs {
   quote: string;
   note_type: NoteType;
@@ -82,6 +96,27 @@ type SproutResult =
   | { status: "depth_limit_exceeded" }
   | { status: "async_not_supported" };
 
+interface TagArgs {
+  quote: string;
+  fruit: unknown;
+}
+
+type TagResult =
+  | { status: "ok"; rule_id: string }
+  | { status: "ambiguous"; occurrences: number }
+  | { status: "not_found" }
+  | { status: "in_compacted_zone"; last_compact_message_id: string }
+  | { status: "invalid_fruit"; errors: string[] };
+
+interface GraftArgs {
+  target?: string;
+}
+
+type GraftResult =
+  | { status: "ok"; mode: "toc"; content: string }
+  | { status: "ok"; mode: "full"; content: string }
+  | { status: "not_found" };
+
 export function createToolHandlers(context: McpServerContext) {
   return {
     async prune(args: PruneArgs): Promise<PruneResult> {
@@ -110,6 +145,14 @@ export function createToolHandlers(context: McpServerContext) {
       const id = randomUUID();
       const rule: RewriteRule = { id, matchQuote: args.quote };
 
+      const header = deriveHeader(args.note_type, validation.fruit);
+      await recordDistillate(
+        context.dir,
+        { event: "prune", sessionId: context.sessionId, ruleId: id, noteType: args.note_type, timestamp: new Date().toISOString() },
+        header,
+        distillateText,
+      );
+
       await context.postControlRule({ sessionId: context.sessionId, dir: context.dir, rule });
       await appendAuditEntry(context.dir, {
         event: "prune",
@@ -122,6 +165,80 @@ export function createToolHandlers(context: McpServerContext) {
       });
 
       return { status: "ok", cut_effective_from: "next_request", rule_id: id, distillate: distillateText };
+    },
+
+    async tag(args: TagArgs): Promise<TagResult> {
+      const validation = validateFruit({ noteType: "portal", fruit: args.fruit, keepCode: true });
+      if (!validation.ok) {
+        return { status: "invalid_fruit", errors: validation.errors };
+      }
+
+      // Same boundary lookup as prune -- proves the quote is a real, unambiguous
+      // position in the transcript -- but tag never posts a rewrite rule: the
+      // marked range stays live in context, this only anchors+measures it.
+      const transcript = await readSessionTranscript(context.dir, context.sessionId);
+      const boundary = findBoundary(transcript, args.quote);
+      if (boundary.status === "not_found") return { status: "not_found" };
+      if (boundary.status === "ambiguous") return { status: "ambiguous", occurrences: boundary.occurrences };
+      if (boundary.status === "in_compacted_zone") {
+        return { status: "in_compacted_zone", last_compact_message_id: boundary.lastCompactMessageId };
+      }
+
+      const filtered = transcript.filter((l) => l.type === "user" || l.type === "assistant");
+      const idx = filtered.findIndex((l) => l.uuid === boundary.messageId);
+
+      const header = deriveHeader("portal", validation.fruit);
+      const distillateText = renderDistillate("portal", validation.fruit);
+      const id = randomUUID();
+      const timestamp = new Date().toISOString();
+
+      await recordDistillate(
+        context.dir,
+        { event: "tag", sessionId: context.sessionId, ruleId: id, noteType: "portal", timestamp },
+        header,
+        distillateText,
+      );
+      await appendAuditEntry(context.dir, {
+        event: "tag",
+        timestamp,
+        sessionId: context.sessionId,
+        ruleId: id,
+        markedLength: JSON.stringify(filtered.slice(0, idx + 1)).length,
+        fruitLength: distillateText.length,
+      });
+
+      return { status: "ok", rule_id: id };
+    },
+
+    async graft(args: GraftArgs): Promise<GraftResult> {
+      const timestamp = new Date().toISOString();
+
+      if (!args.target) {
+        const content = await readCapsule(context.dir, context.sessionId);
+        await appendAuditEntry(context.dir, {
+          event: "graft",
+          timestamp,
+          sessionId: context.sessionId,
+          mode: "toc",
+        });
+        return { status: "ok", mode: "toc", content };
+      }
+
+      const entry = await findCapsuleEntry(context.dir, args.target);
+      if (!entry) return { status: "not_found" };
+
+      const body = await readReportRange(context.dir, entry.sessionId, entry.startLine, entry.endLine);
+      const content = `[graft: ${entry.event} ${entry.ruleId}, session ${entry.sessionId}, ${entry.timestamp}]\n${body}`;
+
+      await appendAuditEntry(context.dir, {
+        event: "graft",
+        timestamp,
+        sessionId: context.sessionId,
+        targetRuleId: args.target,
+        mode: "full",
+      });
+
+      return { status: "ok", mode: "full", content };
     },
 
     async configure_mekiri(args: ConfigureArgs): Promise<ConfigureResult> {

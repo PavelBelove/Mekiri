@@ -45,3 +45,16 @@ export type BoundaryResult =
   | { status: "not_found" }
   | { status: "ambiguous"; occurrences: number }
   | { status: "in_compacted_zone"; lastCompactMessageId: string };
+
+/** One entry in `.mekiri/capsule-index.jsonl` -- the machine-readable index
+ *  `graft` uses to look up a report.md line range by `ruleId`. Mirrors one
+ *  line of the human-readable `.mekiri/capsule.md`. */
+export interface CapsuleIndexEntry {
+  ruleId: string;
+  header: string;
+  startLine: number;
+  endLine: number;
+  event: "prune" | "tag";
+  sessionId: string;
+  timestamp: string;
+}

@@ -17,6 +17,7 @@ export type {
   Fruit,
   RawLine,
   BoundaryResult,
+  CapsuleIndexEntry,
 } from "./types.js";
 export { validateFruit } from "./fruitSchema.js";
 export type { ValidateFruitArgs, ValidateFruitResult } from "./fruitSchema.js";
@@ -27,7 +28,16 @@ export type { MekiriConfig } from "./configSchema.js";
 export { loadConfig, saveConfig, applyConfigPatch } from "./configStore.js";
 export type { ConfigPatchResult } from "./configStore.js";
 export { appendAuditEntry, readAuditLog } from "./auditLog.js";
-export type { AuditEntry, PruneAuditEntry, SproutAuditEntry, ConfigureAuditEntry } from "./auditLog.js";
+export type {
+  AuditEntry,
+  PruneAuditEntry,
+  SproutAuditEntry,
+  ConfigureAuditEntry,
+  TagAuditEntry,
+  GraftAuditEntry,
+} from "./auditLog.js";
+export { recordDistillate, readReportRange, readCapsule, findCapsuleEntry } from "./reportStore.js";
+export type { ReportEntryMeta } from "./reportStore.js";
 export { createBranch } from "./branch.js";
 export type { CreateBranchArgs, CreateBranchResult } from "./branch.js";
 export { distillationRatio, branchCompression, lifetimeTokenSavings, contextRecyclingRatio, virtualContextLifetime } from "./metrics.js";

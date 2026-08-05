@@ -42,7 +42,38 @@ export interface ConfigureAuditEntry {
   patch: unknown;
 }
 
-export type AuditEntry = PruneAuditEntry | SproutAuditEntry | ConfigureAuditEntry;
+export interface TagAuditEntry {
+  event: "tag";
+  timestamp: string;
+  sessionId: string;
+  ruleId: string;
+  /** Length in characters of the transcript slice from session start up to
+   *  (and including) the quoted message -- the block being marked as
+   *  important. Mirrors PruneAuditEntry.removedBranchLength's measurement
+   *  convention, but nothing is removed: the marked range stays live in
+   *  context, this is purely a size signal for future metrics. */
+  markedLength: number;
+  /** Length in characters of the serialized fruit -- a Phase 1 proxy metric,
+   *  same convention as PruneAuditEntry.fruitLength. No removedBranchLength:
+   *  tag never cuts anything, it's a snapshot. */
+  fruitLength: number;
+}
+
+export interface GraftAuditEntry {
+  event: "graft";
+  timestamp: string;
+  sessionId: string;
+  /** Absent for a table-of-contents graft (no target given). */
+  targetRuleId?: string;
+  mode: "toc" | "full";
+}
+
+export type AuditEntry =
+  | PruneAuditEntry
+  | SproutAuditEntry
+  | ConfigureAuditEntry
+  | TagAuditEntry
+  | GraftAuditEntry;
 
 const AUDIT_RELATIVE_PATH = path.join(".mekiri", "audit.jsonl");
 
