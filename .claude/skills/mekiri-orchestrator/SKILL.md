@@ -5,27 +5,27 @@ description: "Use before dispatching subagent-shaped work (implementation, resea
 
 # mekiri-orchestrator
 
-Перед тем как диспетчировать supervised-задачу с одним финальным результатом через обычный Task-субагент — проверь, есть ли живая, sprout-способная mekiri-host-сессия для целевого проекта, и предпочти её.
+Before dispatching a supervised task with a single final result through a regular Task subagent — check whether a live, sprout-capable mekiri-host session exists for the target project, and prefer it.
 
-## Как использовать
+## How to use
 
-1. Убедиться, что сессия жива (запускает, если нет):
+1. Make sure the session is alive (starts one if not):
    ```bash
    .claude/skills/mekiri-orchestrator/scripts/ensure-running.sh <project-dir>
    ```
-   Идемпотентно: если уже запущена — просто печатает пути; если нет — поднимает и печатает пути.
+   Idempotent: if already running — just prints the paths; if not — brings it up and prints the paths.
 
-2. Отправить реальную задачу:
+2. Send the actual task:
    ```bash
-   .claude/skills/mekiri-orchestrator/scripts/send.sh <project-dir> "текст задачи"
+   .claude/skills/mekiri-orchestrator/scripts/send.sh <project-dir> "task text"
    ```
 
-3. Прочитать результат из лога:
+3. Read the result from the log:
    ```
    <project-dir>/.mekiri/live-session/output.log
    ```
-   (использовать `tail`/периодическую проверку, не блокирующее ожидание — та же живая сессия остаётся открытой для следующей задачи).
+   (use `tail`/periodic polling, not a blocking wait — the same live session stays open for the next task).
 
-## Когда НЕ использовать
+## When NOT to use
 
-Если задача не подходит под форму «супервизируемая задача с одним финальным отчётом» (нужна параллельная работа нескольких независимых веток одновременно, или задача существенно проще одного sprout-вызова) — обычный Task-субагент по-прежнему уместен. Если решаешь не использовать эту сессию для реальной задачи — скажи это явно в ответе пользователю, а не молчаливо возвращайся к дефолту.
+If the task doesn't fit the "supervised task with one final report" shape (needs several independent branches of parallel work at once, or the task is substantially simpler than a single sprout call) — a regular Task subagent is still appropriate. If you decide not to use this session for real work — say so explicitly in your reply to the user, rather than silently falling back to the default.

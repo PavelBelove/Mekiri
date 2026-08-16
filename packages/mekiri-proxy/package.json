@@ -1,7 +1,9 @@
 {
   "name": "mekiri-proxy",
   "version": "0.1.0",
+  "description": "MCP server + wire-level HTTP proxy giving Claude Code sessions real prune/sprout/tag/graft.",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {

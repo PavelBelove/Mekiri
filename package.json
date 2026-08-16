@@ -1,6 +1,12 @@
 {
   "name": "mekiri",
+  "description": "Context hygiene for AI agents: roll back stale conversation history instead of carrying it to the end of the session.",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PavelBelove/Mekiri.git"
+  },
   "workspaces": [
     "packages/*"
   ],

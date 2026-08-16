@@ -13,6 +13,7 @@ import {
   readCapsule,
   findCapsuleEntry,
   computeProjectReport,
+  findUnverifiedPaths,
 } from "mekiri-core";
 import type { NoteType, PortalFruit, DeathReloadFruit, MekiriConfig, TreeMetricsReport, ProjectMetricsReport } from "mekiri-core";
 import type { RewriteRule } from "./rewriteMessages.js";
@@ -74,7 +75,7 @@ interface PruneArgs {
 }
 
 type PruneResult =
-  | { status: "ok"; cut_effective_from: "next_request"; rule_id: string; distillate: string }
+  | { status: "ok"; cut_effective_from: "next_request"; rule_id: string; distillate: string; unverified_files?: string[] }
   | { status: "ambiguous"; occurrences: number }
   | { status: "not_found" }
   | { status: "in_compacted_zone"; last_compact_message_id: string }
@@ -103,7 +104,7 @@ interface TagArgs {
 }
 
 type TagResult =
-  | { status: "ok"; rule_id: string }
+  | { status: "ok"; rule_id: string; unverified_files?: string[] }
   | { status: "ambiguous"; occurrences: number }
   | { status: "not_found" }
   | { status: "in_compacted_zone"; last_compact_message_id: string }
@@ -165,6 +166,9 @@ export function createToolHandlers(context: McpServerContext) {
         distillateText,
       );
 
+      const unverifiedFiles =
+        args.note_type === "portal" ? findUnverifiedPaths(filtered.slice(idx), validation.fruit as PortalFruit) : [];
+
       await context.postControlRule({ sessionId: context.sessionId, dir: context.dir, rule });
       await appendAuditEntry(context.dir, {
         event: "prune",
@@ -174,9 +178,16 @@ export function createToolHandlers(context: McpServerContext) {
         noteType: args.note_type,
         removedBranchLength: JSON.stringify(filtered.slice(idx + 1)).length,
         fruitLength: distillateText.length,
+        ...(unverifiedFiles.length > 0 ? { unverifiedFiles } : {}),
       });
 
-      return { status: "ok", cut_effective_from: "next_request", rule_id: id, distillate: distillateText };
+      return {
+        status: "ok",
+        cut_effective_from: "next_request",
+        rule_id: id,
+        distillate: distillateText,
+        ...(unverifiedFiles.length > 0 ? { unverified_files: unverifiedFiles } : {}),
+      };
     },
 
     async tag(args: TagArgs): Promise<TagResult> {
@@ -206,6 +217,8 @@ export function createToolHandlers(context: McpServerContext) {
       const id = randomUUID();
       const timestamp = new Date().toISOString();
 
+      const unverifiedFiles = findUnverifiedPaths(filtered.slice(0, idx + 1), validation.fruit as PortalFruit);
+
       await recordDistillate(
         context.dir,
         { event: "tag", sessionId: context.sessionId, ruleId: id, noteType: "portal", timestamp },
@@ -219,9 +232,10 @@ export function createToolHandlers(context: McpServerContext) {
         ruleId: id,
         markedLength: JSON.stringify(filtered.slice(0, idx + 1)).length,
         fruitLength: distillateText.length,
+        ...(unverifiedFiles.length > 0 ? { unverifiedFiles } : {}),
       });
 
-      return { status: "ok", rule_id: id };
+      return { status: "ok", rule_id: id, ...(unverifiedFiles.length > 0 ? { unverified_files: unverifiedFiles } : {}) };
     },
 
     async graft(args: GraftArgs): Promise<GraftResult> {

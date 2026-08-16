@@ -1,43 +1,17 @@
 # mekiri-proxy
 
-Даёт любой сессии Claude Code (обычной, не отдельному REPL) настоящий `prune`/`configure_mekiri` — переписывая `messages[]` на уровне HTTP-запроса к Anthropic API, до того как он туда уйдёт. Локальный вид беседы в интерфейсе не трогается, срезается только то, что реально уходит по проводу.
+Gives any Claude Code session (a regular one, not a separate REPL) a real `prune`/`sprout`/`configure_mekiri` — by rewriting `messages[]` at the level of the HTTP request to the Anthropic API, before it goes out. The local conversation view in the UI is never touched; only what actually goes over the wire is cut. The warmed cache survives the cut: only the tail after the rollback point is trimmed, the prefix stays byte-for-byte the same.
 
-**Текущий статус (альфа)**: `prune`/`sprout`/`configure_mekiri` реализованы и рабочие.
+**Status (alpha)**: `prune`/`sprout`/`tag`/`graft`/`configure_mekiri`/`metrics` are implemented and working.
 
-Полный дизайн: [`../../docs/superpowers/specs/2026-07-29-mekiri-proxy-design.md`](../../docs/superpowers/specs/2026-07-29-mekiri-proxy-design.md). Эмпирическое обоснование (кеш переживает срез хвоста): [`../../wire-prune-findings.md`](../../wire-prune-findings.md).
+How this is built at the architecture level — [`../../docs/mechanics/architecture.md`](../../docs/mechanics/architecture.md).
 
-## ⚠️ Важно перед установкой
+## Installation
 
-Этот пакет заворачивает HTTP-трафик Claude Code (включая подписочную OAuth-аутентификацию, если вы залогинены через Free/Pro/Max) через локальный прокси на вашей машине. Anthropic в 2026 году усилила детекцию нестандартных клиентов, использующих подписочные токены. Установка и использование — на ваш страх и риск (см. `wire-prune-findings.md` §3 для деталей). Альфа-стадия, только для тех, кто это осознанно принимает.
+Full turnkey instructions (including setup inside a third-party project) — [`INSTALL.md`](INSTALL.md).
 
-## Установка
+## What to check yourself next
 
-1. Клонируйте этот репозиторий и установите зависимости:
-   ```bash
-   git clone <repo-url>
-   cd rollback
-   npm install
-   ```
-2. В корне проекта, где вы хотите включить Mekiri (может быть этот же репозиторий или любой другой), добавьте в `.mcp.json`:
-   ```json
-   {
-     "mcpServers": {
-       "mekiri-proxy": {
-         "command": "npx",
-         "args": ["tsx", "/абсолютный/путь/до/rollback/packages/mekiri-proxy/bin/mcp-server.ts"]
-       }
-     }
-   }
-   ```
-3. Задайте `ANTHROPIC_BASE_URL` в окружении, где будет запущен Claude Code (например, в `~/.bashrc`/`~/.zshrc`, или в переменных окружения IDE):
-   ```bash
-   export ANTHROPIC_BASE_URL="http://127.0.0.1:8791"
-   ```
-   Переменная читается Claude Code **один раз при старте процесса** — если сессия уже запущена, перезапустите её после установки этой переменной.
-4. Запустите (или перезапустите) Claude Code в целевом проекте. При первом обращении к тулзам Mekiri фоновый демон поднимется автоматически (см. `daemonEnsure.ts`) — вручную ничего стартовать не нужно.
-
-## Что дальше проверить самостоятельно
-
-- `prune` покажет ошибку тула, если демон не поднялся — проверьте `curl http://127.0.0.1:8791/health`, должно вернуть `{"status":"ok","service":"mekiri-proxy-daemon"}`.
-- Активные срезы хранятся в `~/.mekiri-proxy/rules.json` (переопределяется `MEKIRI_PROXY_STATE_DIR`).
-- Живой smoke-тест против настоящего API — `npm run test:live` в `packages/mekiri-proxy` (не запускается по умолчанию, требует реального биллинга).
+- `prune` will show a tool error if the daemon didn't come up — check `curl http://127.0.0.1:8791/health`, it should return `{"status":"ok","service":"mekiri-proxy-daemon"}`.
+- Active rules are stored in `~/.mekiri-proxy/rules.json` (overridable via `MEKIRI_PROXY_STATE_DIR`).
+- A live smoke test against the real API — `npm run test:live` in `packages/mekiri-proxy` (not run by default, requires real billing).

@@ -8,6 +8,9 @@ import {
   readReportRange,
   readCapsule,
   findCapsuleEntry,
+  ensureSessionAlias,
+  writeSessionsIndex,
+  slugify,
   type ReportEntryMeta,
 } from "../src/reportStore.js";
 
@@ -165,5 +168,70 @@ describe("reportStore", () => {
     const crossSessionRead = await readReportRange(dir, entryA!.sessionId, fromA.startLine, fromA.endLine);
     expect(crossSessionRead).toContain("body from session a");
     void fromB;
+  });
+
+  describe("slugify", () => {
+    it("transliterates Cyrillic to ascii kebab-case and truncates", () => {
+      expect(slugify("Изучена структура репозитория")).toBe("izuchena-struktura-repozitoriya");
+      expect(slugify("Hello, World!!!")).toBe("hello-world");
+      expect(slugify("a".repeat(60))).toHaveLength(40);
+    });
+  });
+
+  describe("ensureSessionAlias", () => {
+    it("creates a dir symlink named <date>-<slug> pointing at the sessionId directory", async () => {
+      const alias = await ensureSessionAlias(dir, "session-xyz", "Прочитан файл ради вопроса", "2026-08-06T09:00:00.000Z");
+
+      expect(alias).toBe("2026-08-06-prochitan-fayl-radi-voprosa");
+      const linkPath = path.join(dir, ".mekiri", "sessions", alias);
+      const stat = await fs.lstat(linkPath);
+      expect(stat.isSymbolicLink()).toBe(true);
+      expect(await fs.readlink(linkPath)).toBe("session-xyz");
+    });
+
+    it("is idempotent per session: second call returns the same alias without creating a second symlink", async () => {
+      const first = await ensureSessionAlias(dir, "session-xyz", "first header", "2026-08-06T09:00:00.000Z");
+      const second = await ensureSessionAlias(dir, "session-xyz", "unrelated later header", "2026-08-06T10:00:00.000Z");
+
+      expect(second).toBe(first);
+      const entries = await fs.readdir(path.join(dir, ".mekiri", "sessions"));
+      expect(entries.filter((e) => e !== "session-xyz")).toHaveLength(1);
+    });
+
+    it("resolves a slug collision between two sessions with a numeric suffix", async () => {
+      const first = await ensureSessionAlias(dir, "session-a", "same header", "2026-08-06T09:00:00.000Z");
+      const second = await ensureSessionAlias(dir, "session-b", "same header", "2026-08-06T09:00:00.000Z");
+
+      expect(first).not.toBe(second);
+      expect(second).toBe(`${first}-2`);
+    });
+  });
+
+  describe("writeSessionsIndex", () => {
+    it("writes one row per session with correct prune/tag counts and alias", async () => {
+      await recordDistillate(dir, meta({ sessionId: "session-a", ruleId: "rule-a1", event: "prune" }), "first in session a", "body");
+      await recordDistillate(dir, meta({ sessionId: "session-a", ruleId: "rule-a2", event: "tag" }), "second in session a", "body");
+      await recordDistillate(dir, meta({ sessionId: "session-b", ruleId: "rule-b1", event: "prune" }), "first in session b", "body");
+
+      const content = await fs.readFile(path.join(dir, ".mekiri", "sessions-index.md"), "utf8");
+
+      expect(content).toContain("1 prune / 1 tag");
+      expect(content).toContain("first in session a");
+      expect(content).toContain("1 prune / 0 tag");
+      expect(content).toContain("first in session b");
+
+      const rows = content.split("\n").filter((l) => l.startsWith("- **"));
+      expect(rows).toHaveLength(2);
+    });
+
+    it("recordDistillate keeps sessions-index.md in sync automatically", async () => {
+      await recordDistillate(dir, meta({ sessionId: "session-only" }), "only entry", "body");
+      const content = await fs.readFile(path.join(dir, ".mekiri", "sessions-index.md"), "utf8");
+      expect(content).toContain("only entry");
+
+      await writeSessionsIndex(dir);
+      const contentAfterManualCall = await fs.readFile(path.join(dir, ".mekiri", "sessions-index.md"), "utf8");
+      expect(contentAfterManualCall).toBe(content);
+    });
   });
 });

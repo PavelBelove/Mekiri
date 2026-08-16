@@ -5,42 +5,42 @@ description: "Use when the user states an explicit priority about Mekiri's own b
 
 # mekiri-tuning
 
-Протокол смены `.mekiri/config.json` (`sprout.depth_limit`, `sprout.parallelism`, `sprout.wait_mode`, `priorities.token_efficiency`) через тулзу `configure_mekiri`. Применяется одинаково родителем и любым клоном.
+Protocol for changing `.mekiri/config.json` (`sprout.depth_limit`, `sprout.parallelism`, `sprout.wait_mode`, `priorities.token_efficiency`) via the `configure_mekiri` tool. Applies identically to the parent and to any clone.
 
-## Триггер A — явный приоритет пользователя
+## Trigger A — an explicit user priority
 
-Пользователь прямо заявляет приоритет: например «токены не важны, дай больше глубины/деталей», «сделай sprout глубже», «экономь агрессивно». Реакция — немедленный вызов:
+The user directly states a priority: e.g. "tokens don't matter, give me more depth/detail," "make sprout go deeper," "be aggressive about saving." Response — an immediate call:
 
 ```
-configure_mekiri(patch: <изменение>, reason: "user_override: <кратко что сказал пользователь>")
+configure_mekiri(patch: <change>, reason: "user_override: <brief summary of what the user said>")
 ```
 
-Без отчёта и без вопроса — сам факт явного заявления уже есть согласие.
+No report, no question — the explicit statement itself is already consent.
 
-## Триггер B — накопленный сигнал метрик
+## Trigger B — accumulated metric signal
 
-Источник — **только** `.mekiri/audit.jsonl` в корне проекта (JSON Lines, читай напрямую через Read/Bash — не через API, такого API нет). Каждая строка — одна из: `{"event":"prune", removedBranchLength, fruitLength, ...}`, `{"event":"sprout", branchLength, harvestLength, ...}`, `{"event":"configure_mekiri", ...}`.
+Source — **only** `.mekiri/audit.jsonl` at the project root (JSON Lines, read it directly via Read/Bash — not via an API, no such API exists). Each line is one of: `{"event":"prune", removedBranchLength, fruitLength, ...}`, `{"event":"sprout", branchLength, harvestLength, ...}`, `{"event":"configure_mekiri", ...}`.
 
-Считаются только две метрики (остальные формулы из tz.md §12.2 требуют анализа сессионных файлов, которого у тебя нет при чтении одного `audit.jsonl`):
+Only two metrics count here (the other formulas from tz.md §12.2 require analyzing session files, which you don't have when reading a single `audit.jsonl`):
 
-- **Distillation Ratio** (по каждой `prune`-записи) = `removedBranchLength / fruitLength`.
-- **Branch Compression** (по каждой `sprout`-записи) = `branchLength / harvestLength`.
+- **Distillation Ratio** (per `prune` entry) = `removedBranchLength / fruitLength`.
+- **Branch Compression** (per `sprout` entry) = `branchLength / harvestLength`.
 
-Плейсхолдер-пороги (условные, для калибровки по мере накопления реальных данных — не догма):
+Placeholder thresholds (provisional, for calibration as real data accumulates — not dogma):
 
-| Сигнал | Порог |
+| Signal | Threshold |
 |---|---|
-| Устойчиво низкая дистилляция | ≥3 подряд `prune`-записи со средним Distillation Ratio < 2× |
-| Устойчиво низкое сжатие клонов | ≥2 подряд `sprout`-записи со средним Branch Compression < 2× |
-| Упёрлись в потолок рекурсии | `sprout` только что вернул `{"status": "depth_limit_exceeded"}` в этом самом ходе (не ищи это в логе — такие попытки туда не пишутся) |
+| Sustained low distillation | ≥3 consecutive `prune` entries with an average Distillation Ratio < 2x |
+| Sustained low clone compression | ≥2 consecutive `sprout` entries with an average Branch Compression < 2x |
+| Hit the recursion ceiling | `sprout` just returned `{"status": "depth_limit_exceeded"}` in this very turn (don't look for this in the log — such attempts aren't written there) |
 
-**Правило:** ни один сигнал из Триггера B не приводит к молчаливой правке. Реакция — короткий отчёт с конкретными цифрами (какая метрика, какое значение, за какой период) и прямой вопрос «что делаем». Только после ответа — `configure_mekiri(..., reason: "metric_signal: <что показали цифры>")`.
+**Rule:** no signal from Trigger B leads to a silent edit. The response is a short report with concrete numbers (which metric, what value, over what period) and a direct question — "what do we do." Only after the answer — `configure_mekiri(..., reason: "metric_signal: <what the numbers showed>")`.
 
-## Оговорка про контакт с пользователем
+## Caveat about contact with the user
 
-Шаг «спросить» из Триггера B требует живого контакта с пользователем прямо сейчас:
+The "ask" step from Trigger B requires live contact with the user right now:
 
-- Если контакт есть (например, ты в интерактивном REPL) — спроси напрямую, как описано выше.
-- Если контакта нет (например, ты работаешь автономно как sprout-клон и до `harvest` не общаешься с пользователем) — не применяй правку самостоятельно. Вынеси наблюдение в свой обычный `harvest`-результат как часть дистиллята, оставив решение тому, у кого есть контакт с пользователем.
+- If there is contact (e.g. you're in an interactive REPL) — ask directly, as described above.
+- If there is no contact (e.g. you're working autonomously as a sprout clone and don't talk to the user before `harvest`) — don't apply the change yourself. Carry the observation into your normal `harvest` result as part of the distillate, leaving the decision to whoever has contact with the user.
 
-Триггер A в этой оговорке не нуждается: если пользователь прямо сказал что-то клону через `task` при вызове `sprout`, контакт уже состоялся через родителя.
+Trigger A doesn't need this caveat: if the user told the clone something directly via `task` when calling `sprout`, contact has already happened through the parent.

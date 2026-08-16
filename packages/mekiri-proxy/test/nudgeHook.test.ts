@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideNudge, isMekiriTool, randomThreshold } from "../src/nudgeHook.js";
+import { decideNudge, isMekiriTool, isMutatingCall, randomThreshold } from "../src/nudgeHook.js";
 
 describe("isMekiriTool", () => {
   it("matches MCP-qualified mekiri-proxy tool names", () => {
@@ -99,16 +99,35 @@ describe("decideNudge", () => {
     expect(additionalContext).toBeUndefined();
   });
 
-  it("keeps blocking every subsequent non-mekiri call once hard-blocked, without waiting for the next threshold cycle", () => {
+  it("keeps blocking every subsequent mutating non-mekiri call once hard-blocked, without waiting for the next threshold cycle", () => {
     const blockedState = { callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3 };
 
-    const first = decideNudge(blockedState, "Read");
+    const first = decideNudge(blockedState, "Write");
     expect(first.block).toBeDefined();
     expect(first.nextState.consecutiveIgnored).toBe(3);
 
-    const second = decideNudge(first.nextState, "Bash");
+    const second = decideNudge(first.nextState, "Bash", { command: "rm -rf tmp" });
     expect(second.block).toBeDefined();
     expect(second.nextState.consecutiveIgnored).toBe(3);
+  });
+
+  it("lets a verification-shaped call through under a hard block instead of blocking it", () => {
+    const blockedState = { callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3 };
+
+    const readCall = decideNudge(blockedState, "Read");
+    expect(readCall.block).toBeUndefined();
+    expect(readCall.additionalContext).toContain("Хард-блок активен");
+    expect(readCall.nextState.consecutiveIgnored).toBe(3);
+
+    const safeBash = decideNudge(blockedState, "Bash", { command: "npm test" });
+    expect(safeBash.block).toBeUndefined();
+    expect(safeBash.additionalContext).toContain("Хард-блок активен");
+  });
+
+  it("still blocks a Bash call under hard block when tool_input has no readable command", () => {
+    const blockedState = { callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3 };
+    const { block } = decideNudge(blockedState, "Bash", {});
+    expect(block).toBeDefined();
   });
 
   it("clears the hard block and resets state on a real mekiri tool call", () => {
@@ -131,5 +150,74 @@ describe("decideNudge", () => {
     expect(nextState.consecutiveIgnored).toBe(1);
     expect(additionalContext).not.toContain("undefined");
     expect(additionalContext).not.toContain("NaN");
+  });
+
+  describe("deferCalls grace period", () => {
+    it("seeds deferRemaining from deferCallsFromConfig only on a mekiri tool call", () => {
+      const state = { callsSinceReset: 5, threshold: 6, consecutiveIgnored: 3, deferRemaining: 0 };
+      const { nextState } = decideNudge(state, "mcp__mekiri-proxy__configure_mekiri", undefined, 4);
+      expect(nextState.deferRemaining).toBe(4);
+      expect(nextState.consecutiveIgnored).toBe(0);
+    });
+
+    it("suspends counting and blocking while deferRemaining is positive, decrementing each call", () => {
+      const state = { callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3, deferRemaining: 2 };
+
+      const first = decideNudge(state, "Write");
+      expect(first.block).toBeUndefined();
+      expect(first.nextState.deferRemaining).toBe(1);
+      expect(first.nextState.consecutiveIgnored).toBe(3); // frozen, not cleared
+
+      const second = decideNudge(first.nextState, "Write");
+      expect(second.block).toBeUndefined();
+      expect(second.nextState.deferRemaining).toBe(0);
+    });
+
+    it("resumes normal hard-block behavior once deferRemaining reaches 0", () => {
+      const state = { callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3, deferRemaining: 1 };
+      const spent = decideNudge(state, "Write");
+      expect(spent.nextState.deferRemaining).toBe(0);
+
+      const { block } = decideNudge(spent.nextState, "Write");
+      expect(block).toBeDefined();
+    });
+  });
+});
+
+describe("isMutatingCall", () => {
+  it("treats Read/Grep/Glob as non-mutating", () => {
+    expect(isMutatingCall("Read")).toBe(false);
+    expect(isMutatingCall("Grep")).toBe(false);
+    expect(isMutatingCall("Glob")).toBe(false);
+  });
+
+  it("treats Write/Edit/NotebookEdit as mutating", () => {
+    expect(isMutatingCall("Write")).toBe(true);
+    expect(isMutatingCall("Edit")).toBe(true);
+    expect(isMutatingCall("NotebookEdit")).toBe(true);
+  });
+
+  it("classifies common verification Bash commands as non-mutating", () => {
+    expect(isMutatingCall("Bash", { command: "npm test" })).toBe(false);
+    expect(isMutatingCall("Bash", { command: "npm run build" })).toBe(false);
+    expect(isMutatingCall("Bash", { command: "ls -la .mekiri/sessions/" })).toBe(false);
+    expect(isMutatingCall("Bash", { command: "cat file.md" })).toBe(false);
+    expect(isMutatingCall("Bash", { command: "git status --short" })).toBe(false);
+  });
+
+  it("classifies known mutating Bash commands as mutating regardless of surrounding text", () => {
+    expect(isMutatingCall("Bash", { command: "rm -rf node_modules" })).toBe(true);
+    expect(isMutatingCall("Bash", { command: "git commit -m 'x'" })).toBe(true);
+    expect(isMutatingCall("Bash", { command: "npm install left-pad" })).toBe(true);
+    expect(isMutatingCall("Bash", { command: "echo hi > out.txt" })).toBe(true);
+  });
+
+  it("falls back to true (conservative) for Bash with no readable command", () => {
+    expect(isMutatingCall("Bash", {})).toBe(true);
+    expect(isMutatingCall("Bash", undefined)).toBe(true);
+  });
+
+  it("falls back to true for an unrecognized tool name", () => {
+    expect(isMutatingCall("SomeFutureTool")).toBe(true);
   });
 });

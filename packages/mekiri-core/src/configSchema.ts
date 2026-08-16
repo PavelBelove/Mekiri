@@ -9,6 +9,17 @@ const PrioritiesSchema = z.object({
   token_efficiency: z.enum(["aggressive", "balanced", "irrelevant"]).default("balanced"),
 });
 
+// One-shot, auditable grace period for the PostToolUse nudge-hook: an agent
+// mid-verification (e.g. it just wrote a file and now needs a test/build call
+// before it can honestly close the episode) sets this via
+// `configure_mekiri({patch:{nudge:{deferCalls: N}}}})` to suspend nudge/hard-block
+// counting for N subsequent tool calls. bin/nudge-hook.ts resets it back to 0
+// on disk once consumed, so a grant is always single-use, not an ambient
+// setting -- see decideNudge's deferCallsFromConfig param in nudgeHook.ts.
+const NudgeSchema = z.object({
+  deferCalls: z.number().int().min(0).max(20).default(0),
+});
+
 export const MekiriConfigSchema = z.object({
   // The outer default is *derived* by re-parsing {} through the same inner
   // schema, rather than a hand-written literal — zod v4's .default() does
@@ -19,6 +30,7 @@ export const MekiriConfigSchema = z.object({
   // truth for every default value.
   sprout: SproutSchema.default(() => SproutSchema.parse({})),
   priorities: PrioritiesSchema.default(() => PrioritiesSchema.parse({})),
+  nudge: NudgeSchema.default(() => NudgeSchema.parse({})),
 });
 
 export type MekiriConfig = z.infer<typeof MekiriConfigSchema>;

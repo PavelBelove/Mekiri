@@ -121,6 +121,68 @@ describe("prune handler", () => {
     expect(result.status).toBe("invalid_fruit");
     expect(postControlRule).not.toHaveBeenCalled();
   });
+
+  it("flags a files_touched path as unverified when no matching Write/Edit tool_use is in the cut range", async () => {
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    const result = await handlers.prune({
+      quote: "the answer is 42",
+      note_type: "portal",
+      fruit: { summary: "translated the file", files_touched: [{ path: "README.md", change: "translated to English" }] },
+      keep_code: true,
+    });
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+    expect(result.unverified_files).toEqual(["README.md"]);
+
+    const { appendAuditEntry } = await import("mekiri-core");
+    const entry = vi.mocked(appendAuditEntry).mock.calls.at(-1)![1] as { unverifiedFiles?: string[] };
+    expect(entry.unverifiedFiles).toEqual(["README.md"]);
+  });
+
+  it("does not flag a files_touched path backed by a real Write tool_use in the cut range", async () => {
+    const { readSessionTranscript } = await import("mekiri-core");
+    vi.mocked(readSessionTranscript).mockResolvedValueOnce([
+      { type: "user", uuid: "u1", message: { role: "user", content: [{ type: "text", text: "hello" }] } },
+      { type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: "the answer is 42" }] } },
+      {
+        type: "assistant",
+        uuid: "a2",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", name: "Write", input: { file_path: "/home/pol/dev/rollback/README.md" } } as never],
+        },
+      },
+    ]);
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    const result = await handlers.prune({
+      quote: "the answer is 42",
+      note_type: "portal",
+      fruit: { summary: "translated the file", files_touched: [{ path: "README.md", change: "translated to English" }] },
+      keep_code: true,
+    });
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+    expect(result.unverified_files).toBeUndefined();
+  });
+
+  it("does not annotate unverified_files for death_reload fruit (no files_touched field to check)", async () => {
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    const result = await handlers.prune({
+      quote: "the answer is 42",
+      note_type: "death_reload",
+      fruit: { tried: "assumed a race condition", ruled_out: "not a race condition" },
+      keep_code: false,
+    });
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+    expect(result.unverified_files).toBeUndefined();
+  });
 });
 
 describe("sprout handler", () => {
@@ -233,6 +295,45 @@ describe("tag handler", () => {
     expect(result.status).toBe("invalid_fruit");
     if (result.status !== "invalid_fruit") throw new Error("unreachable");
     expect(result.errors.length).toBeGreaterThan(0);
+  });
+
+  it("flags a files_touched path as unverified when no matching tool_use is in the marked range", async () => {
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    const result = await handlers.tag({
+      quote: "the answer is 42",
+      fruit: { summary: "important block", files_touched: [{ path: "src/foo.ts", change: "modified" }] },
+    });
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+    expect(result.unverified_files).toEqual(["src/foo.ts"]);
+  });
+
+  it("does not flag a files_touched path backed by a real Edit tool_use in the marked range", async () => {
+    const { readSessionTranscript } = await import("mekiri-core");
+    vi.mocked(readSessionTranscript).mockResolvedValueOnce([
+      {
+        type: "assistant",
+        uuid: "a0",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", name: "Edit", input: { file_path: "/proj/src/foo.ts" } } as never],
+        },
+      },
+      { type: "user", uuid: "u1", message: { role: "user", content: [{ type: "text", text: "hello" }] } },
+      { type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: "the answer is 42" }] } },
+    ]);
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    const result = await handlers.tag({
+      quote: "the answer is 42",
+      fruit: { summary: "important block", files_touched: [{ path: "src/foo.ts", change: "modified" }] },
+    });
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+    expect(result.unverified_files).toBeUndefined();
   });
 });
 

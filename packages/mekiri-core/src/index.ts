@@ -38,12 +38,13 @@ export type {
   TagAuditEntry,
   GraftAuditEntry,
 } from "./auditLog.js";
-export { recordDistillate, readReportRange, readCapsule, findCapsuleEntry } from "./reportStore.js";
+export { recordDistillate, readReportRange, readCapsule, findCapsuleEntry, ensureSessionAlias, writeSessionsIndex, slugify } from "./reportStore.js";
 export type { ReportEntryMeta } from "./reportStore.js";
 export { createBranch } from "./branch.js";
 export type { CreateBranchArgs, CreateBranchResult } from "./branch.js";
 export { distillationRatio, branchCompression, lifetimeTokenSavings, contextRecyclingRatio, virtualContextLifetime } from "./metrics.js";
 export { sanitizeDir, readSessionTranscript } from "./sessionTranscript.js";
+export { findUnverifiedPaths } from "./verifyFruitEvidence.js";
 export { buildSessionForest, findPruneTrunk } from "./sessionTree.js";
 export type { SessionNode, SessionTree } from "./sessionTree.js";
 export { computeSubsequentRequestCount, computeLifetimeTokenSavingsForTree, computeTotalContextProduced, computeVirtualContextLifetime, computeProjectReport } from "./metricsReport.js";

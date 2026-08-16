@@ -62,14 +62,14 @@ describe("nudge-hook CLI", () => {
     expect(state.callsSinceReset).toBe(0);
   });
 
-  it("emits a decision:block once consecutiveIgnored is already at the hard-block threshold", async () => {
+  it("emits a decision:block once consecutiveIgnored is already at the hard-block threshold, for a mutating call", async () => {
     workDir = await fs.mkdtemp(path.join(tmpdir(), "nudge-hook-test-"));
     const sessionId = "session-blocked";
     const statePath = path.join(workDir, ".mekiri", "hook-state", `${sessionId}.json`);
     await fs.mkdir(path.dirname(statePath), { recursive: true });
     await fs.writeFile(statePath, JSON.stringify({ callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3 }), "utf8");
 
-    const { stdout, exitCode } = await runHook({ session_id: sessionId, tool_name: "Read" }, workDir);
+    const { stdout, exitCode } = await runHook({ session_id: sessionId, tool_name: "Write" }, workDir);
 
     expect(exitCode).toBe(0);
     const parsed = JSON.parse(stdout);
@@ -78,6 +78,51 @@ describe("nudge-hook CLI", () => {
 
     const state = JSON.parse(await fs.readFile(statePath, "utf8"));
     expect(state.consecutiveIgnored).toBe(3);
+  });
+
+  it("lets a verification-shaped call through instead of blocking once hard-blocked", async () => {
+    workDir = await fs.mkdtemp(path.join(tmpdir(), "nudge-hook-test-"));
+    const sessionId = "session-verify";
+    const statePath = path.join(workDir, ".mekiri", "hook-state", `${sessionId}.json`);
+    await fs.mkdir(path.dirname(statePath), { recursive: true });
+    await fs.writeFile(statePath, JSON.stringify({ callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3 }), "utf8");
+
+    const { stdout, exitCode } = await runHook(
+      { session_id: sessionId, tool_name: "Bash", tool_input: { command: "npm test" } },
+      workDir,
+    );
+
+    expect(exitCode).toBe(0);
+    const parsed = JSON.parse(stdout);
+    expect(parsed.decision).toBeUndefined();
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("Хард-блок активен");
+
+    const state = JSON.parse(await fs.readFile(statePath, "utf8"));
+    expect(state.consecutiveIgnored).toBe(3);
+  });
+
+  it("consumes config.nudge.deferCalls as a one-shot grace grant and resets it to 0 on disk", async () => {
+    workDir = await fs.mkdtemp(path.join(tmpdir(), "nudge-hook-test-"));
+    const sessionId = "session-defer";
+    const statePath = path.join(workDir, ".mekiri", "hook-state", `${sessionId}.json`);
+    const configPath = path.join(workDir, ".mekiri", "config.json");
+    await fs.mkdir(path.dirname(statePath), { recursive: true });
+    await fs.writeFile(statePath, JSON.stringify({ callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3 }), "utf8");
+    await fs.writeFile(configPath, JSON.stringify({ nudge: { deferCalls: 2 } }), "utf8");
+
+    const { stdout, exitCode } = await runHook(
+      { session_id: sessionId, tool_name: "mcp__mekiri-proxy__configure_mekiri" },
+      workDir,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe("");
+
+    const state = JSON.parse(await fs.readFile(statePath, "utf8"));
+    expect(state.deferRemaining).toBe(2);
+
+    const config = JSON.parse(await fs.readFile(configPath, "utf8"));
+    expect(config.nudge.deferCalls).toBe(0);
   });
 
   it("clears a stored hard block once a real mekiri tool call comes through", async () => {

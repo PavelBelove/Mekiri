@@ -1,7 +1,9 @@
 {
   "name": "mekiri-core",
   "version": "0.1.0",
+  "description": "Pure primitives for prune/sprout: transcript slicing, quote-based boundary addressing, fruit schemas.",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {

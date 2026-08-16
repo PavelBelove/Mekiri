@@ -22,6 +22,12 @@ export interface PruneAuditEntry {
   /** Length in characters of the serialized fruit — a Phase 1 proxy metric.
    *  Real token counts require live SDK usage data (see mekiri-host plan). */
   fruitLength: number;
+  /** files_touched[].path entries with no matching Write/Edit/NotebookEdit
+   *  tool_use found in the removed range -- see verifyFruitEvidence.ts.
+   *  Absent (not empty array) when there was nothing to check, i.e. the
+   *  fruit had no files_touched at all. Purely informational: prune never
+   *  fails because of this. */
+  unverifiedFiles?: string[];
 }
 
 export interface SproutAuditEntry {
@@ -57,6 +63,9 @@ export interface TagAuditEntry {
    *  same convention as PruneAuditEntry.fruitLength. No removedBranchLength:
    *  tag never cuts anything, it's a snapshot. */
   fruitLength: number;
+  /** Same evidence check as PruneAuditEntry.unverifiedFiles, run over the
+   *  marked (not removed) range. */
+  unverifiedFiles?: string[];
 }
 
 export interface GraftAuditEntry {

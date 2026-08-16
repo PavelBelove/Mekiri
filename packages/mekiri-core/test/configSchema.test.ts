@@ -12,6 +12,9 @@ describe("MekiriConfigSchema", () => {
       priorities: {
         token_efficiency: "balanced",
       },
+      nudge: {
+        deferCalls: 0,
+      },
     });
   });
 
