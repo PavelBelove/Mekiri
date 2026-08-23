@@ -21,6 +21,7 @@ function meta(overrides: Partial<ReportEntryMeta> = {}): ReportEntryMeta {
     ruleId: "rule-1",
     noteType: "portal",
     timestamp: "2026-08-04T00:00:00.000Z",
+    parts: ["cut"],
     ...overrides,
   };
 }
@@ -36,12 +37,11 @@ describe("reportStore", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("returns a 1-indexed range matching the appended text's real line count on an empty dir", async () => {
+  it("returns a 1-indexed range matching the appended text real line count on an empty dir", async () => {
     const bodyText = "line one\nline two\nline three";
     const { startLine, endLine } = await recordDistillate(dir, meta(), "first header", bodyText);
 
     expect(startLine).toBe(1);
-    // 1 metadata line + 3 body lines = 4 lines total.
     expect(endLine).toBe(4);
 
     const reportPath = path.join(dir, ".mekiri", "sessions", "session-1", "report.md");
@@ -49,11 +49,11 @@ describe("reportStore", () => {
     const indexPath = path.join(dir, ".mekiri", "capsule-index.jsonl");
 
     const reportRaw = await fs.readFile(reportPath, "utf8");
-    expect(reportRaw.split("\n").length - 1).toBe(4); // trailing newline accounted for
+    expect(reportRaw.split("\n").length - 1).toBe(4);
     expect(reportRaw).toContain(bodyText);
 
     const capsuleRaw = await fs.readFile(capsulePath, "utf8");
-    expect(capsuleRaw).toBe("«first header» 1-4 — prune rule-1\n");
+    expect(capsuleRaw).toBe("\u00abfirst header\u00bb 1-4 \u2014 [cut] rule-1\n");
 
     const indexRaw = await fs.readFile(indexPath, "utf8");
     const indexEntry = JSON.parse(indexRaw.trim());
@@ -63,12 +63,13 @@ describe("reportStore", () => {
       startLine: 1,
       endLine: 4,
       event: "prune",
+      parts: ["cut"],
       sessionId: "session-1",
       timestamp: "2026-08-04T00:00:00.000Z",
     });
   });
 
-  it("a second call's startLine is previous endLine + 1 (no gap, no overlap)", async () => {
+  it("the second call startLine equals the previous endLine + 1 (no gap, no overlap)", async () => {
     const first = await recordDistillate(dir, meta({ ruleId: "rule-1" }), "h1", "body one\nbody one line two");
     const second = await recordDistillate(dir, meta({ ruleId: "rule-2" }), "h2", "body two");
 
@@ -77,11 +78,10 @@ describe("reportStore", () => {
 
   it("serializes 5 concurrent calls into non-overlapping ranges with no interleaving corruption", async () => {
     const calls = Array.from({ length: 5 }, (_, i) =>
-      recordDistillate(dir, meta({ ruleId: `rule-${i}` }), `header-${i}`, `body for entry ${i}`),
+      recordDistillate(dir, meta({ ruleId: "rule-" + i }), "header-" + i, "body for entry " + i),
     );
     const results = await Promise.all(calls);
 
-    // Ranges must partition [1, N] with no gaps and no overlaps, in some order.
     const sorted = [...results].sort((a, b) => a.startLine - b.startLine);
     let expectedStart = 1;
     for (const range of sorted) {
@@ -104,17 +104,17 @@ describe("reportStore", () => {
   });
 
   it("findCapsuleEntry returns the right entry by ruleId, undefined for unknown id or missing .mekiri/", async () => {
-    await recordDistillate(dir, meta({ ruleId: "rule-a" }), "header a", "body a");
-    await recordDistillate(dir, meta({ ruleId: "rule-b", event: "tag" }), "header b", "body b");
+    await recordDistillate(dir, meta({ ruleId: "rule-a", parts: ["cut"] }), "header a", "body a");
+    await recordDistillate(dir, meta({ ruleId: "rule-b", parts: ["kept"] }), "header b", "body b");
 
     const entryA = await findCapsuleEntry(dir, "rule-a");
     expect(entryA).toEqual(
-      expect.objectContaining({ ruleId: "rule-a", header: "header a", event: "prune" }),
+      expect.objectContaining({ ruleId: "rule-a", header: "header a", event: "prune", parts: ["cut"] }),
     );
 
     const entryB = await findCapsuleEntry(dir, "rule-b");
     expect(entryB).toEqual(
-      expect.objectContaining({ ruleId: "rule-b", header: "header b", event: "tag" }),
+      expect.objectContaining({ ruleId: "rule-b", header: "header b", event: "prune", parts: ["kept"] }),
     );
 
     expect(await findCapsuleEntry(dir, "rule-unknown")).toBeUndefined();
@@ -127,7 +127,7 @@ describe("reportStore", () => {
     }
   });
 
-  it("readReportRange returns exactly the body text for a given entry, not neighboring entries' content", async () => {
+  it("readReportRange returns exactly the body text for a given entry, not content from neighboring entries", async () => {
     const first = await recordDistillate(dir, meta({ ruleId: "rule-1" }), "h1", "first body\nsecond line of first");
     const second = await recordDistillate(dir, meta({ ruleId: "rule-2" }), "h2", "second body only line");
 
@@ -156,18 +156,50 @@ describe("reportStore", () => {
     expect(capsuleB).toContain("header b");
     expect(capsuleB).not.toContain("header a");
 
-    // capsule-index.jsonl is project-wide: findCapsuleEntry must resolve
-    // ruleIds from either session regardless of which session is "current".
     const entryA = await findCapsuleEntry(dir, "rule-a");
     const entryB = await findCapsuleEntry(dir, "rule-b");
     expect(entryA?.sessionId).toBe("session-a");
     expect(entryB?.sessionId).toBe("session-b");
 
-    // A caller in session-b's context can still read session-a's report body
-    // by routing through the entry's own sessionId, not the caller's.
     const crossSessionRead = await readReportRange(dir, entryA!.sessionId, fromA.startLine, fromA.endLine);
     expect(crossSessionRead).toContain("body from session a");
     void fromB;
+  });
+
+  describe("raw-range chaining", () => {
+    it("records rawStartLine 1 for a session's first entry when the caller supplies rawEndLine", async () => {
+      await recordDistillate(dir, meta({ rawEndLine: 12 }), "h1", "body");
+
+      const entry = await findCapsuleEntry(dir, "rule-1");
+      expect(entry?.rawStartLine).toBe(1);
+      expect(entry?.rawEndLine).toBe(12);
+    });
+
+    it("chains the next entry's rawStartLine off the previous entry's rawEndLine, for the same session", async () => {
+      await recordDistillate(dir, meta({ ruleId: "rule-1", rawEndLine: 12 }), "h1", "body one");
+      await recordDistillate(dir, meta({ ruleId: "rule-2", rawEndLine: 30 }), "h2", "body two");
+
+      const second = await findCapsuleEntry(dir, "rule-2");
+      expect(second?.rawStartLine).toBe(13);
+      expect(second?.rawEndLine).toBe(30);
+    });
+
+    it("does not chain across different sessions -- each session's raw range starts at 1 independently", async () => {
+      await recordDistillate(dir, meta({ ruleId: "rule-a", sessionId: "session-a", rawEndLine: 50 }), "h1", "body a");
+      await recordDistillate(dir, meta({ ruleId: "rule-b", sessionId: "session-b", rawEndLine: 5 }), "h2", "body b");
+
+      const entryB = await findCapsuleEntry(dir, "rule-b");
+      expect(entryB?.rawStartLine).toBe(1);
+      expect(entryB?.rawEndLine).toBe(5);
+    });
+
+    it("omits rawStartLine/rawEndLine entirely when the caller has no rawEndLine (e.g. transcript file unreadable)", async () => {
+      await recordDistillate(dir, meta(), "h1", "body");
+
+      const entry = await findCapsuleEntry(dir, "rule-1");
+      expect(entry?.rawStartLine).toBeUndefined();
+      expect(entry?.rawEndLine).toBeUndefined();
+    });
   });
 
   describe("slugify", () => {
@@ -179,7 +211,7 @@ describe("reportStore", () => {
   });
 
   describe("ensureSessionAlias", () => {
-    it("creates a dir symlink named <date>-<slug> pointing at the sessionId directory", async () => {
+    it("creates a dir symlink named date-slug pointing at the sessionId directory", async () => {
       const alias = await ensureSessionAlias(dir, "session-xyz", "Прочитан файл ради вопроса", "2026-08-06T09:00:00.000Z");
 
       expect(alias).toBe("2026-08-06-prochitan-fayl-radi-voprosa");
@@ -203,21 +235,21 @@ describe("reportStore", () => {
       const second = await ensureSessionAlias(dir, "session-b", "same header", "2026-08-06T09:00:00.000Z");
 
       expect(first).not.toBe(second);
-      expect(second).toBe(`${first}-2`);
+      expect(second).toBe(first + "-2");
     });
   });
 
   describe("writeSessionsIndex", () => {
-    it("writes one row per session with correct prune/tag counts and alias", async () => {
-      await recordDistillate(dir, meta({ sessionId: "session-a", ruleId: "rule-a1", event: "prune" }), "first in session a", "body");
-      await recordDistillate(dir, meta({ sessionId: "session-a", ruleId: "rule-a2", event: "tag" }), "second in session a", "body");
-      await recordDistillate(dir, meta({ sessionId: "session-b", ruleId: "rule-b1", event: "prune" }), "first in session b", "body");
+    it("writes one row per session with correct cut/kept counts and alias", async () => {
+      await recordDistillate(dir, meta({ sessionId: "session-a", ruleId: "rule-a1", parts: ["cut"] }), "first in session a", "body");
+      await recordDistillate(dir, meta({ sessionId: "session-a", ruleId: "rule-a2", parts: ["kept"] }), "second in session a", "body");
+      await recordDistillate(dir, meta({ sessionId: "session-b", ruleId: "rule-b1", parts: ["cut"] }), "first in session b", "body");
 
       const content = await fs.readFile(path.join(dir, ".mekiri", "sessions-index.md"), "utf8");
 
-      expect(content).toContain("1 prune / 1 tag");
+      expect(content).toContain("1 cut / 1 kept");
       expect(content).toContain("first in session a");
-      expect(content).toContain("1 prune / 0 tag");
+      expect(content).toContain("1 cut / 0 kept");
       expect(content).toContain("first in session b");
 
       const rows = content.split("\n").filter((l) => l.startsWith("- **"));

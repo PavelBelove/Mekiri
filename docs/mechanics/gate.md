@@ -41,12 +41,15 @@ The "got dirty → `prune`" reflex doesn't mean "this very second." Before rolli
 
 The warm cache lives for a limited time (roughly the last 20 actions / 5-6 agent turns, then a few minutes of TTL until it fully cools). Past that window, the next request is read from scratch at full price regardless of whether the agent rolled back or not — waiting past that boundary saves nothing.
 
-## `tag` — a log of the trunk, not just of cut branches
+## Archiving without cutting: `fruit.kept_context`, `quote: ""`
 
-The session's table of contents (`graft` with no `target`) is, in practice, filled almost entirely with `prune` entries — pointers to what was *cut*. Nothing remains about the trunk itself — what actually stayed in the live context and got done during the session — unless it's recorded separately via `tag`. If the session ends in compaction before the next `prune`, an important decision or finding that no one was told about via `tag` is lost for good.
+The session's table of contents (`graft` with no `target`) is, in practice, filled almost entirely with the cut side of `prune` calls — pointers to what was *cut*. Nothing remains about the trunk itself — what actually stayed in the live context and got done during the session — unless it is recorded separately via `fruit.kept_context`. Every `prune` call, cutting or not, carries this field; fill it whenever a fact worth surviving into the archive shows up, even mid-cut. If the session ends in compaction before the next `prune`, an important decision or finding that no one put into `kept_context` is lost for good.
+
+When nothing needs cutting at all, call `prune` with `quote: ""` and a non-empty `kept_context` — a pure archive call, no rewrite rule posted, the live transcript untouched.
 
 | Situation | Tool |
 |---|---|
-| Found an architectural invariant or the cause of a bug, and the knowledge itself stays needed in the trunk for the rest of the session | `tag` |
-| The user gave a lesson/correction that now shapes behavior for the rest of the session (not a dead end, no branch to cut) | `tag` |
-| Discovered that someone else's tool/skill is broken or outdated, and this matters for future sessions of this project | `tag` |
+| Found an architectural invariant or the cause of a bug, and the knowledge itself stays needed in the trunk for the rest of the session | `prune` with `quote: ""`, fact in `kept_context` |
+| The user gave a lesson/correction that now shapes behavior for the rest of the session (not a dead end, no branch to cut) | `prune` with `quote: ""`, fact in `kept_context` |
+| Discovered that someone else's tool/skill is broken or outdated, and this matters for future sessions of this project | `prune` with `quote: ""`, fact in `kept_context` |
+| A normal cut also surfaces a fact worth keeping past this specific branch | one `prune(portal)` call, cut-side fields filled as usual and `kept_context` filled too |

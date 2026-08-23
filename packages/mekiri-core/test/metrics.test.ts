@@ -14,6 +14,7 @@ const pruneEntry: PruneAuditEntry = {
   sessionId: "p1",
   newSessionId: "c1",
   noteType: "portal",
+  parts: ["cut"],
   removedBranchLength: 12400,
   fruitLength: 510,
 };

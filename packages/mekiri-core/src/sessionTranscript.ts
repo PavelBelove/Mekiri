@@ -16,6 +16,13 @@ function resolveConfigDir(): string {
   return process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), ".claude");
 }
 
+function parseTranscript(raw: string): RawLine[] {
+  return raw
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as RawLine);
+}
+
 /**
  * Reads a real, already-recorded session transcript from disk --
  * $CLAUDE_CONFIG_DIR/projects/<sanitizeDir(dir)>/<sessionId>.jsonl, falling
@@ -26,11 +33,25 @@ export async function readSessionTranscript(dir: string, sessionId: string): Pro
   const filePath = path.join(resolveConfigDir(), "projects", sanitizeDir(dir), `${sessionId}.jsonl`);
   try {
     const raw = await fs.readFile(filePath, "utf8");
-    return raw
-      .split("\n")
-      .filter((line) => line.length > 0)
-      .map((line) => JSON.parse(line) as RawLine);
+    return parseTranscript(raw);
   } catch {
     return [];
+  }
+}
+
+/**
+ * Like readSessionTranscript, but distinguishes "file missing" (returns
+ * null) from "file exists and is empty" (returns []). graft's raw-fetch
+ * needs this to report an honest "transcript unavailable" status instead of
+ * silently treating a missing file the same as an empty one.
+ */
+export async function readSessionTranscriptOrNull(dir: string, sessionId: string): Promise<RawLine[] | null> {
+  const filePath = path.join(resolveConfigDir(), "projects", sanitizeDir(dir), `${sessionId}.jsonl`);
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return parseTranscript(raw);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
   }
 }

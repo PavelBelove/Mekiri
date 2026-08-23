@@ -62,13 +62,16 @@ describe("mekiri-core end-to-end: read dirty logs, then prune(portal)", () => {
     expect(boundary.status).toBe("ok");
     if (boundary.status !== "ok") return;
 
+    const quote = "Reading the 7000 lines of CI logs";
     const fruitCheck = validateFruit({
       noteType: "portal",
       fruit: {
         summary: "CI flake is a retry/cleanup race; fixed by locking the cleanup handler.",
         files_touched: [{ path: "ci/retry.ts", change: "added lock around cleanup" }],
+        kept_context: "",
       },
       keepCode: true,
+      quote,
     });
     expect(fruitCheck.ok).toBe(true);
     if (!fruitCheck.ok) return;

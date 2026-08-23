@@ -25,6 +25,13 @@ export interface SessionTree {
  */
 function nodeFromEntry(entry: AuditEntry, tipBySessionId: Map<string, string>): SessionNode | undefined {
   if (entry.event === "prune") {
+    // Pure-archive prune calls (fruit.kept_context only, quote: "") cut
+    // nothing -- there is no branch and no removedBranchLength to report,
+    // so they produce no tree edge. Same treatment as the other
+    // no-stable-anchor cases below.
+    // entry.parts is absent on audit entries written before the prune+tag
+    // merge (legacy data) -- treat as no "cut" rather than crash.
+    if (!(entry.parts ?? []).includes("cut") || entry.removedBranchLength === undefined) return undefined;
     // mekiri-host prunes fork a genuinely new, real session -- no tip
     // tracking needed, same as before.
     if (entry.newSessionId !== undefined) {

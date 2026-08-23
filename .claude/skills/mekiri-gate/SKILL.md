@@ -17,17 +17,17 @@ Verify this through `graft`, not by rewriting from scratch. Before telling the u
 
 **The symmetric error — distrusting your own successful `prune`.** `prune` returned `ok` with an honest `fruit` that you yourself wrote about work that was genuinely done (not invented) — and a few turns later the urge arises to rerun the same commands "just in case," because the tool calls from the cut range are no longer visible in the context. This is not a glitch and not a reason to double-check — this is exactly what a successful `prune` is supposed to look like: the cut erased the history but didn't undo the fact. The distillate in `fruit` can be trusted as an accomplished fact without re-execution; if the result is in doubt, use `graft(rule_id)`, not a rerun of work that's already deleted/tested/committed. A related symptom of the same error is blaming the disappearance of your own recent tool calls on auto-compaction when the cause is right in front of you: your own `prune` earlier in this same turn.
 
-## `tag` — a log of the trunk, not just of cut branches
+## `fruit.kept_context` — a log of the trunk, not just of cut branches
 
-The session capsule (`graft` with no `target`) is currently, in practice, filled almost entirely with `prune` entries — that is, pointers to what was *cut*. Nothing remains in the capsule about the trunk itself — what actually stayed in the live context and got done during the session — unless it's recorded separately. If the session ends in compaction before the next `prune`, an important decision or finding that you never told anyone about via `tag` is lost for good — not as a distillate, but entirely.
+`quote` in `prune` marks a dual boundary, not just a cut point: everything before it is the kept side, everything from it to now is the cut side. Every `fruit` object -- portal or death_reload -- carries a `kept_context` field for the kept side, required as a key but allowed to be an empty string when there is nothing to keep. The session capsule (`graft` with no `target`) is currently, in practice, filled almost entirely with the cut side of `prune` calls -- pointers to what was *cut*. Nothing remains in the capsule about the trunk itself -- what actually stayed in the live context and got done during the session -- unless it is recorded separately via `kept_context`. If the session ends in compaction before the next `prune`, an important decision or finding that you never put into `kept_context` is lost for good -- not as a distillate, but entirely.
 
-Reflex: as soon as a fact, invariant, or decision appears in the trunk (without a cut) that a) isn't a reason for a rollback right now, and b) would be worth being able to pull via `graft` from a future session or after this one compacts — call `tag` right after stating it in text, without waiting for the next `prune`. Don't wait for several such findings to pile up.
+Reflex: as soon as a fact, invariant, or decision appears in the trunk (without a cut) that a) isn't a reason for a rollback right now, and b) would be worth being able to pull via `graft` from a future session or after this one compacts -- call `prune` with `quote: ""` and that fact in `kept_context` right after stating it in text, without waiting for the next cutting `prune`. Don't wait for several such findings to pile up. If a normal cutting `prune` call happens to coincide with such a finding, fill `kept_context` on that same call instead of a separate one.
 
 | Situation | Tool |
 |---|---|
-| Found an architectural invariant or the cause of a bug, and the knowledge itself stays needed in the trunk for the rest of the session | `tag` |
-| The user gave a lesson/correction that now shapes your behavior for the rest of the session (not a dead end, no branch to cut) | `tag` |
-| Discovered that someone else's tool/skill is broken or outdated, and this matters for future sessions of this project | `tag` |
+| Found an architectural invariant or the cause of a bug, and the knowledge itself stays needed in the trunk for the rest of the session | `prune` with `quote: ""`, fact in `kept_context` |
+| The user gave a lesson/correction that now shapes your behavior for the rest of the session (not a dead end, no branch to cut) | `prune` with `quote: ""`, fact in `kept_context` |
+| Discovered that someone else's tool/skill is broken or outdated, and this matters for future sessions of this project | `prune` with `quote: ""`, fact in `kept_context` |
 
 ## Rollback economics (exactly when, not just "got dirty")
 

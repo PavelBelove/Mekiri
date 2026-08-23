@@ -100,28 +100,46 @@ export async function writeSessionsIndex(dir: string): Promise<void> {
   });
   sessions.sort((a, b) => a.sorted[0].timestamp.localeCompare(b.sorted[0].timestamp));
 
+  const nl = String.fromCharCode(10);
   for (const { sessionId, sorted } of sessions) {
     const first = sorted[0];
     const last = sorted[sorted.length - 1];
-    const pruneCount = sorted.filter((e) => e.event === "prune").length;
-    const tagCount = sorted.filter((e) => e.event === "tag").length;
+    // entry.parts is absent on entries written before the prune+tag merge
+    // (legacy "tag" events, and "prune" events from before `parts` existed) --
+    // fall back to [] rather than crash on old capsule-index.jsonl data.
+    const cutCount = sorted.filter((e) => (e.parts ?? []).includes("cut")).length;
+    const keptCount = sorted.filter((e) => (e.parts ?? []).includes("kept")).length;
     const aliasMarker = await readFileIfExists(path.join(sessionsDir, sessionId, ALIAS_MARKER_FILENAME));
     const alias = aliasMarker.trim() || sessionId;
-    rows.push(
-      `- **${alias}** (\`${sessionId}\`) — ${first.timestamp} → ${last.timestamp}, ${pruneCount} prune / ${tagCount} tag — «${first.header}»`,
-    );
+    const row =
+      "- **" + alias + "** (" + sessionId + ") " +
+      first.timestamp + " to " + last.timestamp + ", " +
+      cutCount + " cut / " + keptCount + " kept " +
+      String.fromCharCode(0x2014) + " " + first.header;
+    rows.push(row);
   }
 
-  const content = `# Sessions\n\nOne line per session. Full detail lives in each session's own \`capsule.md\`/\`report.md\` (open via the alias folder below).\n\n${rows.join("\n")}\n`;
+  const introText =
+    "# Sessions" + nl + nl +
+    "One line per session. Full detail lives in the session own capsule.md/report.md (open via the alias folder below)." + nl + nl;
+  const content = introText + rows.join(nl) + nl;
   await fs.writeFile(path.join(dir, SESSIONS_INDEX_RELATIVE_PATH), content, "utf8");
 }
 
 export interface ReportEntryMeta {
-  event: "prune" | "tag";
+  event: "prune";
   sessionId: string;
   ruleId: string;
   noteType: NoteType;
   timestamp: string;
+  parts: ("kept" | "cut")[];
+  /** 1-based index of the last raw transcript line (as returned by
+   *  readSessionTranscript) covered by this entry -- the position of the
+   *  cut boundary for a "cut" entry, or the transcript's current length for
+   *  a kept-only entry. Undefined when the caller couldn't read the
+   *  transcript (e.g. file missing); recordDistillate then skips raw-range
+   *  recording for this entry entirely, rather than storing a bogus range. */
+  rawEndLine?: number;
 }
 
 // Serializes concurrent recordDistillate calls behind an in-module
@@ -195,8 +213,30 @@ export async function recordDistillate(
 
     const capsulePath = sessionCapsulePath(dir, meta.sessionId);
     await fs.mkdir(path.dirname(capsulePath), { recursive: true });
-    const capsuleLine = `«${header}» ${startLine}-${endLine} — ${meta.event} ${meta.ruleId}\n`;
+    const partsLabel = meta.parts.length === 2 ? "kept+cut" : meta.parts[0];
+    const capsuleLine =
+      "«" + header + "» " + startLine + "-" + endLine + " — [" + partsLabel + "] " + meta.ruleId + "\n";
     await fs.appendFile(capsulePath, capsuleLine, "utf8");
+
+    const indexPath = path.join(dir, CAPSULE_INDEX_RELATIVE_PATH);
+    await fs.mkdir(path.dirname(indexPath), { recursive: true });
+
+    // Chain this session's raw-transcript range off its own previous entry
+    // (rawStartLine = previous rawEndLine + 1), mirroring how startLine
+    // chains off report.md's own length above. Read under the same mutex so
+    // concurrent writers for different sessions can't interleave and
+    // produce overlapping raw ranges for the same session.
+    let rawStartLine: number | undefined;
+    let rawEndLine: number | undefined;
+    if (meta.rawEndLine !== undefined) {
+      const existingIndexRaw = await readFileIfExists(indexPath);
+      const priorRawEnds = splitLines(existingIndexRaw)
+        .map((line) => JSON.parse(line) as CapsuleIndexEntry)
+        .filter((e) => e.sessionId === meta.sessionId && e.rawEndLine !== undefined)
+        .map((e) => e.rawEndLine as number);
+      rawStartLine = priorRawEnds.length > 0 ? Math.max(...priorRawEnds) + 1 : 1;
+      rawEndLine = meta.rawEndLine;
+    }
 
     const indexEntry: CapsuleIndexEntry = {
       ruleId: meta.ruleId,
@@ -204,11 +244,11 @@ export async function recordDistillate(
       startLine,
       endLine,
       event: meta.event,
+      parts: meta.parts,
       sessionId: meta.sessionId,
       timestamp: meta.timestamp,
+      ...(rawStartLine !== undefined ? { rawStartLine, rawEndLine } : {}),
     };
-    const indexPath = path.join(dir, CAPSULE_INDEX_RELATIVE_PATH);
-    await fs.mkdir(path.dirname(indexPath), { recursive: true });
     await fs.appendFile(indexPath, `${JSON.stringify(indexEntry)}\n`, "utf8");
 
     await ensureSessionAlias(dir, meta.sessionId, header, meta.timestamp);

@@ -3,7 +3,7 @@ import { buildSessionForest, findPruneTrunk } from "../src/sessionTree.js";
 import type { AuditEntry, PruneAuditEntry, SproutAuditEntry } from "../src/auditLog.js";
 
 function pruneEntry(sessionId: string, newSessionId: string, timestamp: string): PruneAuditEntry {
-  return { event: "prune", timestamp, sessionId, newSessionId, noteType: "portal", removedBranchLength: 100, fruitLength: 20 };
+  return { event: "prune", timestamp, sessionId, newSessionId, noteType: "portal", parts: ["cut"], removedBranchLength: 100, fruitLength: 20 };
 }
 
 function sproutEntry(sessionId: string, childSessionId: string, timestamp: string): SproutAuditEntry {
@@ -61,6 +61,7 @@ describe("buildSessionForest", () => {
       timestamp: "2026-01-01T00:30:00.000Z",
       sessionId: "a",
       noteType: "portal",
+      parts: ["cut"],
       removedBranchLength: 10,
       fruitLength: 5,
     };
@@ -78,9 +79,9 @@ describe("buildSessionForest", () => {
   it("chains successive wire-level prunes (same real sessionId, distinct ruleId) into a multi-node trunk instead of colliding on one parent", () => {
     const sessionId = "wire-session";
     const entries: AuditEntry[] = [
-      { event: "prune", timestamp: "2026-01-01T00:00:00.000Z", sessionId, ruleId: "rule-1", noteType: "portal", removedBranchLength: 10, fruitLength: 5 },
-      { event: "prune", timestamp: "2026-01-01T00:10:00.000Z", sessionId, ruleId: "rule-2", noteType: "portal", removedBranchLength: 20, fruitLength: 8 },
-      { event: "prune", timestamp: "2026-01-01T00:20:00.000Z", sessionId, ruleId: "rule-3", noteType: "portal", removedBranchLength: 30, fruitLength: 12 },
+      { event: "prune", timestamp: "2026-01-01T00:00:00.000Z", sessionId, ruleId: "rule-1", noteType: "portal", parts: ["cut"], removedBranchLength: 10, fruitLength: 5 },
+      { event: "prune", timestamp: "2026-01-01T00:10:00.000Z", sessionId, ruleId: "rule-2", noteType: "portal", parts: ["cut"], removedBranchLength: 20, fruitLength: 8 },
+      { event: "prune", timestamp: "2026-01-01T00:20:00.000Z", sessionId, ruleId: "rule-3", noteType: "portal", parts: ["cut"], removedBranchLength: 30, fruitLength: 12 },
     ];
     const forest = buildSessionForest(entries);
     expect(forest).toHaveLength(1);
@@ -98,7 +99,7 @@ describe("buildSessionForest", () => {
   it("attaches a sprout after wire-level prunes to the current synthetic tip, not the original sessionId", () => {
     const sessionId = "wire-session";
     const entries: AuditEntry[] = [
-      { event: "prune", timestamp: "2026-01-01T00:00:00.000Z", sessionId, ruleId: "rule-1", noteType: "portal", removedBranchLength: 10, fruitLength: 5 },
+      { event: "prune", timestamp: "2026-01-01T00:00:00.000Z", sessionId, ruleId: "rule-1", noteType: "portal", parts: ["cut"], removedBranchLength: 10, fruitLength: 5 },
       sproutEntry(sessionId, "clone1", "2026-01-01T00:15:00.000Z"),
     ];
     const forest = buildSessionForest(entries);

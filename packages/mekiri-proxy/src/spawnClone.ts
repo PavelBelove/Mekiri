@@ -35,6 +35,8 @@ function runOnce(args: SpawnCloneArgs): Promise<SpawnCloneResult> {
       "--resume",
       args.sessionId,
       "--fork-session",
+      "--permission-mode",
+      "bypassPermissions",
       "-p",
       frameTask(args.task),
       "--output-format",

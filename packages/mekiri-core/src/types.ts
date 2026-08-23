@@ -10,6 +10,10 @@ export interface PortalFruit {
   summary: string;
   files_touched?: FileTouched[];
   gotchas?: string;
+  /** Important context that stays live (not cut) but is worth archiving for
+   *  future sessions -- the former `tag` payload, now riding along on every
+   *  `prune` call. Always present, "" when nothing is worth flagging. */
+  kept_context: string;
 }
 
 export interface DeathReloadFruit {
@@ -17,6 +21,8 @@ export interface DeathReloadFruit {
   ruled_out: string;
   facts_learned?: string;
   trigger?: "self_detected" | "user_feedback";
+  /** See PortalFruit.kept_context. */
+  kept_context: string;
 }
 
 export type Fruit = PortalFruit | DeathReloadFruit;
@@ -54,7 +60,19 @@ export interface CapsuleIndexEntry {
   header: string;
   startLine: number;
   endLine: number;
-  event: "prune" | "tag";
+  event: "prune";
+  /** Which halves of the merged `prune` call actually fired: "kept" (the
+   *  archive-only, former `tag` half -- nothing removed from live context)
+   *  and/or "cut" (context actually removed and replaced by a distillate). */
+  parts: ("kept" | "cut")[];
   sessionId: string;
   timestamp: string;
+  /** 1-based indices into the RawLine[] returned by `readSessionTranscript`
+   *  for this sessionId -- the raw transcript fragment `graft` can replay
+   *  verbatim. Chained per-session: rawStartLine is the previous entry's
+   *  rawEndLine + 1 (or 1 if this is the session's first entry). Absent on
+   *  entries written before this field existed -- graft must fall back
+   *  gracefully, never crash, on old capsule-index.jsonl data. */
+  rawStartLine?: number;
+  rawEndLine?: number;
 }

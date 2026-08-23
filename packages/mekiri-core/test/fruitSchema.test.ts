@@ -5,8 +5,9 @@ describe("validateFruit", () => {
   it("accepts a portal fruit without files_touched when keep_code is false", () => {
     const result = validateFruit({
       noteType: "portal",
-      fruit: { summary: "read logs, found the cause" },
+      fruit: { summary: "read logs, found the cause", kept_context: "" },
       keepCode: false,
+      quote: "some quote",
     });
     expect(result.ok).toBe(true);
   });
@@ -14,8 +15,9 @@ describe("validateFruit", () => {
   it("rejects a portal fruit missing files_touched when keep_code is true", () => {
     const result = validateFruit({
       noteType: "portal",
-      fruit: { summary: "read logs, found the cause" },
+      fruit: { summary: "read logs, found the cause", kept_context: "" },
       keepCode: true,
+      quote: "some quote",
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -29,17 +31,20 @@ describe("validateFruit", () => {
       fruit: {
         summary: "read logs, found the cause",
         files_touched: [{ path: "src/foo.ts", change: "fixed off-by-one" }],
+        kept_context: "",
       },
       keepCode: true,
+      quote: "some quote",
     });
     expect(result.ok).toBe(true);
   });
 
-  it("rejects a portal fruit missing summary", () => {
+  it("rejects a portal fruit missing summary and kept_context entirely", () => {
     const result = validateFruit({
       noteType: "portal",
       fruit: {},
       keepCode: false,
+      quote: "some quote",
     });
     expect(result.ok).toBe(false);
   });
@@ -49,6 +54,7 @@ describe("validateFruit", () => {
       noteType: "portal",
       fruit: {},
       keepCode: false,
+      quote: "some quote",
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -59,8 +65,9 @@ describe("validateFruit", () => {
   it("accepts a death_reload fruit with tried and ruled_out", () => {
     const result = validateFruit({
       noteType: "death_reload",
-      fruit: { tried: "assumed serialization bug", ruled_out: "it's not serialization" },
+      fruit: { tried: "assumed serialization bug", ruled_out: "it is not serialization", kept_context: "" },
       keepCode: true,
+      quote: "some quote",
     });
     expect(result.ok).toBe(true);
   });
@@ -68,9 +75,59 @@ describe("validateFruit", () => {
   it("rejects a death_reload fruit missing ruled_out", () => {
     const result = validateFruit({
       noteType: "death_reload",
-      fruit: { tried: "assumed serialization bug" },
+      fruit: { tried: "assumed serialization bug", kept_context: "" },
       keepCode: true,
+      quote: "some quote",
     });
     expect(result.ok).toBe(false);
+  });
+
+  it("rejects death_reload when quote is empty (a dead end always cuts something)", () => {
+    const result = validateFruit({
+      noteType: "death_reload",
+      fruit: { tried: "x", ruled_out: "y", kept_context: "" },
+      keepCode: true,
+      quote: "",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join(" ")).toMatch(/death_reload/);
+    }
+  });
+
+  it("accepts a pure archive call: quote empty, kept_context non-empty, cut side left blank", () => {
+    const result = validateFruit({
+      noteType: "portal",
+      fruit: { summary: "", kept_context: "an invariant worth remembering" },
+      keepCode: false,
+      quote: "",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects when both quote and kept_context are empty (nothing to cut, nothing to keep)", () => {
+    const result = validateFruit({
+      noteType: "portal",
+      fruit: { summary: "", kept_context: "" },
+      keepCode: false,
+      quote: "",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join(" ")).toMatch(/nothing to record/);
+    }
+  });
+
+  it("rejects a cut portal call with an empty summary", () => {
+    const result = validateFruit({
+      noteType: "portal",
+      fruit: { summary: "", kept_context: "" },
+      keepCode: false,
+      quote: "some quote",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join(" ")).toMatch(/summary/);
+    }
   });
 });

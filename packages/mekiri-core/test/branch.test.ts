@@ -100,6 +100,7 @@ describe("createBranch", () => {
         sessionId: PARENT_SESSION_1,
         newSessionId,
         noteType: "portal",
+        parts: ["cut"],
         removedBranchLength: 1,
         fruitLength: 42,
       },

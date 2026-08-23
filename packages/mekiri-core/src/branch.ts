@@ -31,6 +31,7 @@ export async function createBranch(backend: ExecutionBackend, args: CreateBranch
       sessionId: args.sessionId,
       newSessionId: result.newSessionId,
       noteType: args.noteType,
+      parts: ["cut"],
       removedBranchLength: args.removedBranchLength,
       fruitLength: args.fruitLength,
     });

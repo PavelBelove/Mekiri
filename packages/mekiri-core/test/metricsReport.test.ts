@@ -40,7 +40,7 @@ describe("metricsReport (LTS + CRR)", () => {
 
   it("computeSubsequentRequestCount sums user turns across the whole subtree", async () => {
     const entries: AuditEntry[] = [
-      { event: "prune", timestamp: "2026-01-01T00:00:00.000Z", sessionId: "root", newSessionId: "a", noteType: "portal", removedBranchLength: 500, fruitLength: 50 },
+      { event: "prune", timestamp: "2026-01-01T00:00:00.000Z", sessionId: "root", newSessionId: "a", noteType: "portal", parts: ["cut"], removedBranchLength: 500, fruitLength: 50 },
       { event: "sprout", timestamp: "2026-01-01T01:00:00.000Z", sessionId: "a", childSessionId: "clone1", branchLength: 100, harvestLength: 20 },
     ];
     const forest = buildSessionForest(entries);
@@ -58,6 +58,7 @@ describe("metricsReport (LTS + CRR)", () => {
       sessionId: "root",
       newSessionId: "a",
       noteType: "portal",
+      parts: ["cut"],
       removedBranchLength: 500,
       fruitLength: 50,
     };
@@ -81,6 +82,7 @@ describe("metricsReport (LTS + CRR)", () => {
       sessionId: "root",
       newSessionId: "a",
       noteType: "portal",
+      parts: ["cut"],
       removedBranchLength: 500,
       fruitLength: 50,
     };
@@ -89,6 +91,7 @@ describe("metricsReport (LTS + CRR)", () => {
       timestamp: "2026-01-01T00:30:00.000Z",
       sessionId: "a",
       noteType: "portal",
+      parts: ["cut"],
       removedBranchLength: 200,
       fruitLength: 20,
     };
@@ -103,7 +106,7 @@ describe("metricsReport (LTS + CRR)", () => {
 
   it("computeTotalContextProduced sums transcript lengths across every node including the root", async () => {
     const entries: AuditEntry[] = [
-      { event: "prune", timestamp: "2026-01-01T00:00:00.000Z", sessionId: "root", newSessionId: "a", noteType: "portal", removedBranchLength: 500, fruitLength: 50 },
+      { event: "prune", timestamp: "2026-01-01T00:00:00.000Z", sessionId: "root", newSessionId: "a", noteType: "portal", parts: ["cut"], removedBranchLength: 500, fruitLength: 50 },
     ];
     const forest = buildSessionForest(entries);
     await writeFixtureTranscript(configDir, "root", 1);
@@ -235,6 +238,7 @@ describe("computeProjectReport", () => {
         sessionId: "root",
         newSessionId: "a",
         noteType: "portal",
+        parts: ["cut"],
         removedBranchLength: 500,
         fruitLength: 50,
       });
@@ -279,6 +283,7 @@ describe("computeProjectReport", () => {
         sessionId: "root",
         newSessionId: "a",
         noteType: "portal",
+        parts: ["cut"],
         removedBranchLength: 500,
         fruitLength: 50,
       });
@@ -287,6 +292,7 @@ describe("computeProjectReport", () => {
         timestamp: "2026-01-01T00:30:00.000Z",
         sessionId: "a",
         noteType: "portal",
+        parts: ["cut"],
         removedBranchLength: 200,
         fruitLength: 20,
       });
@@ -318,6 +324,7 @@ describe("computeProjectReport", () => {
         sessionId: "root",
         newSessionId: "a",
         noteType: "portal",
+        parts: ["cut"],
         removedBranchLength: 500,
         fruitLength: 50,
       });
@@ -327,6 +334,7 @@ describe("computeProjectReport", () => {
         sessionId: "a",
         ruleId: "rule-1",
         noteType: "portal",
+        parts: ["cut"],
         removedBranchLength: 200,
         fruitLength: 10,
       });

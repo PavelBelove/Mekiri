@@ -1,7 +1,13 @@
 import type { AuditEntry, PruneAuditEntry, SproutAuditEntry } from "./auditLog.js";
 
-/** tz.md §12.2 — Distillation Ratio = removed branch length / fruit length. */
+/** tz.md §12.2 — Distillation Ratio = removed branch length / fruit length.
+ *  Only meaningful for a cut entry -- callers filter to those upstream
+ *  (sessionTree.ts's nodeFromEntry only builds a tree node for parts
+ *  including "cut", where removedBranchLength is always set). */
 export function distillationRatio(entry: PruneAuditEntry): number {
+  if (entry.removedBranchLength === undefined) {
+    throw new Error("distillationRatio: entry has no removedBranchLength (not a cut prune)");
+  }
   return entry.removedBranchLength / entry.fruitLength;
 }
 
@@ -12,11 +18,14 @@ export function branchCompression(entry: SproutAuditEntry): number {
 
 /** tz.md §12.2 — Lifetime Token Savings = removed length * subsequent request count. */
 export function lifetimeTokenSavings(entry: PruneAuditEntry, subsequentRequestCount: number): number {
+  if (entry.removedBranchLength === undefined) {
+    throw new Error("lifetimeTokenSavings: entry has no removedBranchLength (not a cut prune)");
+  }
   return entry.removedBranchLength * subsequentRequestCount;
 }
 
 function branchLengthOf(entry: AuditEntry): number {
-  if (entry.event === "prune") return entry.removedBranchLength;
+  if (entry.event === "prune") return entry.removedBranchLength ?? 0;
   if (entry.event === "sprout") return entry.branchLength;
   return 0;
 }
