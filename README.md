@@ -1,8 +1,8 @@
 # Mekiri
 
-**Context hygiene for AI agents: roll back garbage from the conversation history instead of carrying it to the end of the session.**
+**Context hygiene for AI agents, within a session and across them: roll back garbage instead of carrying it to the end, and hand off what a session learned instead of losing it when the session ends.**
 
-Mekiri (芽切り, "bud pruning") is an MCP tool for Claude Code. It gives an agent two primitives on top of a regular session: **`prune`** — a targeted rollback of part of the history, replaced with a short distillate, and **`sprout`** — a warm fork of the current context for parallel work. Both preserve the conversation prefix byte-for-byte, so the warmed cache is never lost.
+Mekiri (芽切り, "bud pruning") is an MCP tool for Claude Code. It started as two primitives on top of a regular session — **`prune`** (a targeted rollback of part of the history, replaced with a short distillate) and **`sprout`** (a warm fork of the current context for parallel work) — and has grown into a full context-hygiene system: those two live primitives, plus **`graft`**, a project-wide library that every `prune` call feeds automatically, so what one session worked out doesn't have to be re-derived by the next one. All three preserve the conversation prefix byte-for-byte, so the warmed cache is never lost.
 
 ## The problem
 
@@ -12,16 +12,38 @@ The industry's standard answer is auto-compaction: an emergency summarization of
 
 Between "tolerate the pollution" and "lose the whole context" there's a third path: remove exactly what became garbage from the history, leaving a short distillate in its place — and do this routinely, not only in an emergency.
 
+The cost of not doing this compounds silently, not just once. Say an agent spends its first turn reading a one-off log during warm-up, and the session then runs another 100 turns of ordinary work at 2-4 API calls each — that log gets sent back to the model roughly 300 times, not once, because every request resends the full prefix. Prompt caching cuts the price of a cached token to a fraction of a fresh one, but doesn't zero it out: at even a ~10% cache rate, 300 repeat charges for content nobody will read again is still typically the single largest line item in that session's bill — or, on a subscription plan, the fastest way to burn the usage limit on nothing.
+
 ## The solution
 
-One primitive with two independent parameters (which branch dies, and when the operation is invoked) yields two tools:
+One primitive with two independent parameters (which branch dies, and when the operation is invoked) yields two tools, plus a third that both feed automatically:
 
-- **`prune(quote, note_type, fruit, keep_code)`** — rolls back part of the history. The range from a verbatim quote to the current moment is cut from what goes into the next request to the model, and replaced with a distillate (`fruit`). Implemented at the level of an HTTP proxy between Claude Code and the Anthropic API — the local session file and the user interface are never touched, only what goes over the wire is rewritten.
+- **`prune(quote, note_type, fruit, keep_code)`** — rolls back part of the history. The range from a verbatim quote to the current moment is cut from what goes into the next request to the model, and replaced with a distillate (`fruit`). Implemented at the level of an HTTP proxy between Claude Code and the Anthropic API — the local session file and the user interface are never touched, only what goes over the wire is rewritten. `quote: ""` turns the same call into a pure archive note, without cutting anything.
 - **`sprout(task, wait_mode)`** — a warm clone: an honest session fork (`claude --resume --fork-session`) that carries the entire current context along as an asset, without blocking the parent from continuing its main task.
-- **`tag`** / **`graft`** — bookmark a valuable fact in the trunk without cutting anything, and read the archive of notes across sessions of the same project. The archive doubles as the project's library: `.mekiri/sessions-index.md` gives a human or agent a one-line-per-session overview of "what happened before," speeding up a new session's warm-up without re-reading old transcripts in full.
+- **`graft`** — reads the library every `prune` call writes to, whether or not it cut anything. `graft()` lists the current session's own archive; `graft(rule_id)` recovers the verbatim raw transcript fragment behind any past entry, in any session of the project — not just the distillate, so an agent can check a summary against what actually happened.
 - **`configure_mekiri`** / **`metrics`** — tune behavior and built-in efficiency metrics (Distillation Ratio, Lifetime Token Savings, and more).
 
 For a detailed architecture breakdown, see [docs/mechanics/architecture.md](docs/mechanics/architecture.md).
+
+## The library: a memory that builds itself
+
+`prune` and `sprout` are about managing a single session's context — this is a separate payoff, not a detail of how those tools work. If context is what makes up an agent's identity for the duration of a session, `prune`/`sprout` give it the ability to forget what it no longer needs and recall what it does — *within* that one session. Every `prune` call, whether or not it cuts anything, also writes an entry into an on-disk archive that outlives the session — free, automatic, no separate indexing step. Run across a project's whole lifetime, that adds up to something a single session's hygiene can't: accumulated experience carried forward instead of re-derived, knowledge shared between sessions and agents with no live handoff required, the *reasoning* behind a decision preserved and not just its conclusion, and — the thing most memory schemes drop entirely — negative knowledge: what was tried and shown false, not just what turned out true.
+
+Three layers of abstraction, each cheaper to read than the one below it:
+
+- **Navigation** (`sessions-index.md`, `capsule.md`) — a one-line-per-session overview, then a table of contents per session. Where to look, without reading anything line by line.
+- **Understanding** (`report.md`) — the actual distillate bodies, append-only and chronological, so the reasoning behind a decision reads as the contiguous argument it was, not a shuffled bag of facts.
+- **Identity recovery** (`graft`) — not a summary of what a past session thought, but the literal transcript fragment as it was actually written: the exact reasoning, the exact request, the exact wording of an agreement made with the user, recoverable from any session in the project in a single call.
+
+Full writeup, including why this is shaped like a ship's log and a card catalog rather than RAG or a Zettelkasten, in [docs/mechanics/library.md](docs/mechanics/library.md).
+
+## What changes over a session's life
+
+Three effects compound as a session runs long, only the first of which is about tokens:
+
+- **More runway before compaction.** A session's cost without hygiene grows roughly quadratically with turn count — every turn re-reads everything the previous ones accumulated. Hygiene removes exactly the part of that growth that's garbage, so the number of agent turns a session can cover before hitting the compaction ceiling ("effective mileage") goes up — often several-fold on debugging and point-fix tasks, which is exactly where that ceiling bites hardest today.
+- **The main task stays legible mid-context.** A normal agent chasing a bug tries several things before the fix lands, and all of those attempts stay sitting in the context right next to the actual task — diluting it, the well-documented "lost in the middle" effect where content buried mid-context draws less attention than content at either edge. Mekiri rolls the failed attempts back instead of leaving them in place, so once the bug is actually fixed, the original task sits at the tail of the context — the zone of maximum recency and attention — instead of several thousand tokens of dead ends deep.
+- **The next session doesn't start from zero.** Every `prune` call also feeds the project's library (see above) — a decision, an invariant, or a root cause found once doesn't need re-deriving by a fresh session or a sprout clone picking the project back up later.
 
 ## Example
 
@@ -43,7 +65,7 @@ The next request to the model from this session no longer contains the 500 log l
 
 ## Status
 
-V 0.2. Implemented and used in the project's own day-to-day design (dogfooding): `prune`, `sprout`, `tag`, `graft`, `configure_mekiri`, `metrics`, `nudge-hook` (a forced reminder to use the tools). Not implemented (mentioned as a direction in [docs/philosophy.md](docs/philosophy.md)): `promote` (changing the leader of a session tree), Interrogation Mode, `sprout` with `wait_mode: "async"`.
+V 0.3. Implemented and used in the project's own day-to-day design (dogfooding): `prune` (a single dual-boundary call, superseding the earlier separate `tag`), `sprout`, `graft`, `configure_mekiri`, `metrics`, `nudge-hook` (a forced reminder to use the tools). Not implemented: Interrogation Mode, `sprout` with `wait_mode: "async"`.
 
 ## Installation
 
@@ -57,7 +79,8 @@ cd Mekiri && npm install && npm run typecheck
 ## Mechanics in detail
 
 - [architecture.md](docs/mechanics/architecture.md) — one primitive, two parameters; why `prune` and `sprout` are implemented differently
-- [prune-and-graft.md](docs/mechanics/prune-and-graft.md) — rollback, `note_type: portal | death_reload`, `tag`, reading the archive via `graft`
+- [prune-and-graft.md](docs/mechanics/prune-and-graft.md) — rollback, `note_type: portal | death_reload`, where `fruit` goes
+- [library.md](docs/mechanics/library.md) — the project-wide archive on its own terms: three layers, why it's a ship's log and card catalog, not RAG or a Zettelkasten
 - [sprout.md](docs/mechanics/sprout.md) — warm fork, limitations, the clone's right to self-escalate
 - [gate.md](docs/mechanics/gate.md) — when to `prune`, when to `sprout`, when to use a clean subagent, when to just stay inline
 - [tuning-and-metrics.md](docs/mechanics/tuning-and-metrics.md) — `configure_mekiri`, metric formulas, `nudge-hook`
