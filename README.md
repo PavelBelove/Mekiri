@@ -69,12 +69,25 @@ V 0.3. Implemented and used in the project's own day-to-day design (dogfooding):
 
 ## Installation
 
-Mekiri is an MCP server + PostToolUse hook for Claude Code. Full turnkey instructions (including setup inside a third-party project, not just Mekiri itself) — [packages/mekiri-proxy/INSTALL.md](packages/mekiri-proxy/INSTALL.md).
+Mekiri is an MCP server + PostToolUse hook for Claude Code.
+
+### Self-hosting Mekiri on itself
+
+Cloning this repo and opening Claude Code in it needs no file edits — `.mcp.json`, `.claude/settings.json`, `CLAUDE.md`, and `.claude/skills/*` already ship correctly configured for self-hosting.
 
 ```bash
 git clone https://github.com/PavelBelove/Mekiri.git
-cd Mekiri && npm install && npm run typecheck
+cd Mekiri && npm install
+npm run typecheck && npm run test --workspaces
 ```
+
+Then set `ANTHROPIC_BASE_URL=http://127.0.0.1:8791` in the environment Claude Code actually starts from — a shell rc file for a terminal launch, or (for a GUI/IDE launch, where shell rc files aren't sourced) a systemd user-environment drop-in on Linux; see [INSTALL.md §3](packages/mekiri-proxy/INSTALL.md#3-anthropic_base_url) for the exact recipe — and **restart the whole Claude Code session**: the env var, `.mcp.json`, the hook, and the skills are all read once at process startup.
+
+Verify: `curl http://127.0.0.1:8791/health` should return `{"status":"ok",...}`, and the `mekiri-gate` skill should show up in your available skills.
+
+### Wiring Mekiri into a different project
+
+Full turnkey instructions — [packages/mekiri-proxy/INSTALL.md](packages/mekiri-proxy/INSTALL.md).
 
 ## Mechanics in detail
 
@@ -88,6 +101,10 @@ cd Mekiri && npm install && npm run typecheck
 ## Philosophy
 
 Where the name comes from and why the "portal / death-and-rebirth / instance" game metaphor is used to describe what happens to an agent from inside its context — optional reading in [docs/philosophy.md](docs/philosophy.md).
+
+## Support the project
+
+Mekiri is MIT-licensed with no strings attached — this section is a request, not a condition. It's a side project with no marketing budget, built and maintained for free. If it's useful to you, a star on GitHub, a mention in your team's chat, or a share on social media costs you nothing and genuinely helps it reach the next person it'd help too.
 
 ## License
 

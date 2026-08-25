@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { decideNudge } from "../src/nudgeHook.ts";
-import type { NudgeState } from "../src/nudgeHook.ts";
+import { loadHookState, saveHookState } from "../src/hookState.ts";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -9,15 +9,6 @@ async function readStdin(): Promise<string> {
     chunks.push(chunk as Buffer);
   }
   return Buffer.concat(chunks).toString("utf8");
-}
-
-async function loadState(filePath: string): Promise<NudgeState | undefined> {
-  try {
-    const raw = await fs.readFile(filePath, "utf8");
-    return JSON.parse(raw) as NudgeState;
-  } catch {
-    return undefined;
-  }
 }
 
 // Deliberately does not import mekiri-core's configStore/configSchema: this
@@ -68,19 +59,24 @@ async function main(): Promise<void> {
   }
 
   const dir = input.cwd ?? process.cwd();
-  const statePath = path.join(dir, ".mekiri", "hook-state", `${input.session_id}.json`);
   const configPath = path.join(dir, ".mekiri", "config.json");
 
-  const [state, deferCalls] = await Promise.all([loadState(statePath), readDeferCalls(configPath)]);
+  const [hookState, deferCalls] = await Promise.all([
+    loadHookState(dir, input.session_id),
+    readDeferCalls(configPath),
+  ]);
   const { nextState, additionalContext, block } = decideNudge(
-    state,
+    hookState?.nudge,
     input.tool_name,
     input.tool_input,
     deferCalls,
   );
 
-  await fs.mkdir(path.dirname(statePath), { recursive: true });
-  await fs.writeFile(statePath, JSON.stringify(nextState), "utf8");
+  // Only this hook's own slice (.nudge) is ever written here -- .stopBoundary
+  // (set by bin/stop-hook.ts, consumed by mcpServer.ts's prune handler) must
+  // survive untouched across PostToolUse firings in between, so the full
+  // prior state is read back and spread rather than overwritten wholesale.
+  await saveHookState(dir, input.session_id, { ...hookState, nudge: nextState });
 
   // One-shot grant: a Mekiri call that just seeded nextState.deferRemaining
   // from deferCalls must not keep re-granting it on every future reset, so

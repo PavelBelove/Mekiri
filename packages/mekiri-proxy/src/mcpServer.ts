@@ -19,6 +19,7 @@ import {
 import type { NoteType, PortalFruit, DeathReloadFruit, MekiriConfig, TreeMetricsReport, ProjectMetricsReport, RawLine } from "mekiri-core";
 import type { RewriteRule } from "./rewriteMessages.js";
 import { spawnClone } from "./spawnClone.js";
+import { loadHookState, saveHookState } from "./hookState.js";
 
 export interface McpServerContext {
   sessionId: string;
@@ -81,10 +82,33 @@ interface PruneArgs {
 
 type PruneResult =
   | { status: "ok"; cut_effective_from: "next_request"; rule_id: string; distillate: string; unverified_files?: string[] }
-  | { status: "ambiguous"; occurrences: number }
-  | { status: "not_found" }
-  | { status: "in_compacted_zone"; last_compact_message_id: string }
+  | { status: "ambiguous"; occurrences: number; hint: string }
+  | { status: "not_found"; hint: string }
+  | { status: "in_compacted_zone"; last_compact_message_id: string; hint: string }
   | { status: "invalid_fruit"; errors: string[] };
+
+// Shown on every failed quote-resolution outcome (not_found/ambiguous/
+// in_compacted_zone) -- this is the moment of maximum pressure to fabricate
+// a quote (see feedback_mekiri_fruit_accuracy memory, 2026-08-25 incident):
+// the agent is staring at exactly this response with a nudge-hook threshold
+// looming and no valid quote in hand. quote: "" already exists, is fully
+// honest, and already resets the nudge state -- the fix is surfacing it
+// right here instead of relying on the agent recalling it from a skill file
+// under pressure.
+const NOT_FOUND_HINT =
+  "Нет совпадения для этой цитаты в транскрипте. Если резать реально нечего прямо сейчас " +
+  "(например, цитата — из ещё не завершённого текущего хода, который физически не мог успеть " +
+  "записаться на диск) — вызови prune с quote: \"\" и опиши то, что стоит сохранить, в kept_context. " +
+  "Это полноценный вызов Mekiri-тулзы, засчитывается и сбрасывает счётчик напоминаний хука. " +
+  "Никогда не изобретай цитату, которой не было.";
+const AMBIGUOUS_HINT =
+  "Эта цитата встречается в транскрипте несколько раз — нужен более длинный, однозначный фрагмент. " +
+  "Если однозначную цитату сейчас не найти и резать реально нечего — не пытайся угадывать короче " +
+  "или длиннее, используй quote: \"\" вместо этого.";
+const IN_COMPACTED_ZONE_HINT =
+  "Эта цитата находится до последней точки компакции — в живом транскрипте её больше нет, резать " +
+  "оттуда нельзя. Если важно сохранить что-то из этого диапазона, опиши это в kept_context при " +
+  "следующем prune (с quote: \"\" или с валидной цитатой из текущей, некомпактированной зоны).";
 
 interface ConfigureArgs {
   patch: Partial<MekiriConfig>;
@@ -152,6 +176,15 @@ export function createToolHandlers(context: McpServerContext) {
       const timestamp = new Date().toISOString();
       const id = randomUUID();
 
+      // Set by bin/stop-hook.ts when it force-blocked a Stop event: the
+      // report the agent just wrote, which must survive this prune's cut
+      // even though nothing (no user message) separates it from this call's
+      // own tool_use anchor. Consumed below (threaded into rule via
+      // preserveFromQuote) and cleared after processing regardless of
+      // hasCut -- one-shot, same pattern as nudge.deferCalls.
+      const hookState = await loadHookState(context.dir, context.sessionId);
+      const stopBoundary = hookState?.stopBoundary;
+
       let filtered: RawLine[] = [];
       let cutIdx = -1;
       let rule: RewriteRule | undefined;
@@ -173,10 +206,16 @@ export function createToolHandlers(context: McpServerContext) {
           () => readSessionTranscript(context.dir, context.sessionId),
           args.quote,
         );
-        if (boundary.status === "not_found") return { status: "not_found" };
-        if (boundary.status === "ambiguous") return { status: "ambiguous", occurrences: boundary.occurrences };
+        if (boundary.status === "not_found") return { status: "not_found", hint: NOT_FOUND_HINT };
+        if (boundary.status === "ambiguous") {
+          return { status: "ambiguous", occurrences: boundary.occurrences, hint: AMBIGUOUS_HINT };
+        }
         if (boundary.status === "in_compacted_zone") {
-          return { status: "in_compacted_zone", last_compact_message_id: boundary.lastCompactMessageId };
+          return {
+            status: "in_compacted_zone",
+            last_compact_message_id: boundary.lastCompactMessageId,
+            hint: IN_COMPACTED_ZONE_HINT,
+          };
         }
 
         filtered = transcript.filter((l) => l.type === "user" || l.type === "assistant");
@@ -187,7 +226,11 @@ export function createToolHandlers(context: McpServerContext) {
         const rawBoundaryIdx = transcript.findIndex((l) => l.uuid === boundary.messageId);
         if (rawBoundaryIdx >= 0) rawEndLine = rawBoundaryIdx + 1;
 
-        rule = { id, matchQuote: args.quote };
+        rule = {
+          id,
+          matchQuote: args.quote,
+          ...(stopBoundary ? { preserveFromQuote: stopBoundary.lastAssistantMessage } : {}),
+        };
       } else {
         const transcript = await readSessionTranscriptOrNull(context.dir, context.sessionId);
         if (transcript !== null) rawEndLine = transcript.length;
@@ -221,6 +264,18 @@ export function createToolHandlers(context: McpServerContext) {
 
       if (rule) {
         await context.postControlRule({ sessionId: context.sessionId, dir: context.dir, rule });
+      }
+
+      // One-shot consumption: the agent reacted to the Stop-forced block by
+      // calling prune (cutting or not), so the flag is spent either way --
+      // leaving it set would make the *next* ordinary prune call also try to
+      // preserve a now-stale report.
+      if (stopBoundary) {
+        // hookState is necessarily defined here: stopBoundary was read from
+        // hookState?.stopBoundary above, so a truthy stopBoundary implies a
+        // defined hookState -- TS can't link the two through the
+        // intermediate const, hence the assertion.
+        await saveHookState(context.dir, context.sessionId, { ...hookState!, stopBoundary: undefined });
       }
 
       await appendAuditEntry(context.dir, {

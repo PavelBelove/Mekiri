@@ -5,5 +5,5 @@
     "outDir": "dist"
   },
   "include": ["src", "bin"],
-  "exclude": ["bin/nudge-hook.ts"]
+  "exclude": ["bin/nudge-hook.ts", "bin/stop-hook.ts"]
 }

@@ -1,5 +1,7 @@
 import http from "node:http";
 import https from "node:https";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { rewriteMessages } from "./rewriteMessages.js";
 import type { RewriteRule } from "./rewriteMessages.js";
 import { extractSessionId } from "./sessionMetadata.js";
@@ -30,6 +32,8 @@ function readBody(req: http.IncomingMessage): Promise<Buffer> {
   });
 }
 
+const sourceDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
 export async function createDaemon(options: DaemonOptions): Promise<DaemonHandle> {
   const rules = new Map<string, RewriteRule[]>();
   for (const [sessionId, entry] of Object.entries(await loadAllRules())) {
@@ -40,7 +44,9 @@ export async function createDaemon(options: DaemonOptions): Promise<DaemonHandle
     try {
       if (req.method === "GET" && req.url === "/health") {
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", service: "mekiri-proxy-daemon" }));
+        res.end(
+          JSON.stringify({ status: "ok", service: "mekiri-proxy-daemon", pid: process.pid, sourceDir })
+        );
         return;
       }
 
