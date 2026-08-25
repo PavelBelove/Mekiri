@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node --experimental-strip-types \"$CLAUDE_PROJECT_DIR/packages/mekiri-proxy/bin/stop-hook-spike.ts\""
+            "command": "node --experimental-strip-types \"$CLAUDE_PROJECT_DIR/packages/mekiri-proxy/bin/stop-hook.ts\""
           }
         ]
       }
