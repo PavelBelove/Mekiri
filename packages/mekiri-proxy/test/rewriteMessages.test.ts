@@ -194,6 +194,100 @@ describe("rewriteMessages", () => {
     expect(rewriteMessages(messages, [rule])).toEqual([messages[0], messages[2], messages[3]]);
   });
 
+  it("preserveFromQuote pulls the cut end back before a separate preceding report message (split layout)", () => {
+    const messages = [
+      { role: "user", content: "start" }, // 0 kept
+      { role: "assistant", content: [{ type: "text", text: "closed episode text" }] }, // 1 cut
+      { role: "user", content: "turn2" }, // 2 cut
+      { role: "assistant", content: [{ type: "text", text: "final report" }] }, // 3 kept -- must survive
+      { role: "assistant", content: [pruneToolUse("toolu_X", "closed episode text")] }, // 4 kept (anchor)
+      { role: "user", content: [pruneToolResult("toolu_X", "RULE_X")] }, // 5 kept
+      { role: "user", content: "next prompt" }, // 6 kept
+    ];
+    const rule: RewriteRule = {
+      id: "RULE_X",
+      matchQuote: "closed episode text",
+      preserveFromQuote: "final report",
+    };
+
+    const result = rewriteMessages(messages, [rule]);
+
+    expect(result).toEqual([messages[0], messages[3], messages[4], messages[5], messages[6]]);
+    assertNoOrphanToolResults(result);
+  });
+
+  it("without preserveFromQuote, the same split-layout report gets cut like ordinary garbage (control case)", () => {
+    const messages = [
+      { role: "user", content: "start" }, // 0 kept
+      { role: "assistant", content: [{ type: "text", text: "closed episode text" }] }, // 1 cut
+      { role: "user", content: "turn2" }, // 2 cut
+      { role: "assistant", content: [{ type: "text", text: "final report" }] }, // 3 cut -- no flag, no protection
+      { role: "assistant", content: [pruneToolUse("toolu_X", "closed episode text")] }, // 4 kept (anchor)
+      { role: "user", content: [pruneToolResult("toolu_X", "RULE_X")] }, // 5 kept
+      { role: "user", content: "next prompt" }, // 6 kept
+    ];
+    const rule: RewriteRule = { id: "RULE_X", matchQuote: "closed episode text" };
+
+    const result = rewriteMessages(messages, [rule]);
+
+    expect(result).toEqual([messages[0], messages[4], messages[5], messages[6]]);
+  });
+
+  it("preserveFromQuote is a no-op when the report text is merged into the anchor tool_use message itself", () => {
+    const messages = [
+      { role: "user", content: "start" }, // 0 kept
+      { role: "assistant", content: [{ type: "text", text: "closed episode text" }] }, // 1 cut
+      { role: "user", content: "turn2" }, // 2 cut
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "final report" }, pruneToolUse("toolu_M", "closed episode text")],
+      }, // 3 kept -- merged report + anchor, survives whole
+      { role: "user", content: [pruneToolResult("toolu_M", "RULE_M")] }, // 4 kept
+      { role: "user", content: "next prompt" }, // 5 kept
+    ];
+    const rule: RewriteRule = {
+      id: "RULE_M",
+      matchQuote: "closed episode text",
+      preserveFromQuote: "final report",
+    };
+
+    const result = rewriteMessages(messages, [rule]);
+
+    expect(result).toEqual([messages[0], messages[3], messages[4], messages[5]]);
+  });
+
+  it("preserveFromQuote's backward search finds the nearest preceding report, not an older coincidentally-matching message", () => {
+    const messages = [
+      { role: "user", content: "start" }, // 0 kept -- NOT the boundary, despite matching text below
+      { role: "assistant", content: [{ type: "text", text: "final report" }] }, // 1 kept -- older, coincidental match, must be ignored
+      { role: "user", content: "u1" }, // 2 kept
+      { role: "assistant", content: [{ type: "text", text: "closed episode text" }] }, // 3 cut
+      { role: "user", content: "turn4" }, // 4 cut
+      { role: "assistant", content: [{ type: "text", text: "final report" }] }, // 5 kept -- the real, nearest report
+      { role: "assistant", content: [pruneToolUse("toolu_Y", "closed episode text")] }, // 6 kept (anchor)
+      { role: "user", content: [pruneToolResult("toolu_Y", "RULE_Y")] }, // 7 kept
+      { role: "user", content: "next prompt" }, // 8 kept
+    ];
+    const rule: RewriteRule = {
+      id: "RULE_Y",
+      matchQuote: "closed episode text",
+      preserveFromQuote: "final report",
+    };
+
+    const result = rewriteMessages(messages, [rule]);
+
+    expect(result).toEqual([
+      messages[0],
+      messages[1],
+      messages[2],
+      messages[5],
+      messages[6],
+      messages[7],
+      messages[8],
+    ]);
+    assertNoOrphanToolResults(result);
+  });
+
   it("does not mutate the original messages array", () => {
     const messages = [
       { role: "user", content: "turn0" },

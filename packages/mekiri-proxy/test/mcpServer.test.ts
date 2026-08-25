@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createToolHandlers } from "../src/mcpServer.js";
 import { spawnClone } from "../src/spawnClone.js";
+import { loadHookState, saveHookState } from "../src/hookState.js";
 import type { AuditEntry } from "mekiri-core";
 
 // appendAuditEntry is mocked to a no-op above, so handler calls in these
@@ -183,6 +184,146 @@ describe("prune handler: cutting calls (quote non-empty)", () => {
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.unverified_files).toBeUndefined();
+  });
+
+  // These three cover the exact response an agent sees at the moment of
+  // maximum pressure to fabricate a quote (see feedback_mekiri_fruit_accuracy
+  // memory) -- the `hint` field must actually point at quote: "" as the
+  // honest escape, not just exist.
+  it("returns not_found with a hint pointing at quote: \"\" when the quote matches nothing", async () => {
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    const result = await handlers.prune({
+      quote: "this text does not appear anywhere in the transcript",
+      note_type: "portal",
+      fruit: { summary: "n/a", kept_context: "" },
+      keep_code: false,
+    });
+
+    expect(result).toEqual({ status: "not_found", hint: expect.stringContaining('quote: ""') });
+  });
+
+  it("returns ambiguous with a hint when the quote matches more than one message", async () => {
+    const { readSessionTranscript } = await import("mekiri-core");
+    vi.mocked(readSessionTranscript).mockResolvedValueOnce([
+      { type: "user", uuid: "u1", message: { role: "user", content: [{ type: "text", text: "investigate" }] } },
+      { type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: "Checking the database schema for issues." }] } },
+      { type: "assistant", uuid: "a2", message: { role: "assistant", content: [{ type: "text", text: "Checking the database schema for issues, again." }] } },
+    ] as never);
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    const result = await handlers.prune({
+      quote: "Checking the database schema for issues",
+      note_type: "portal",
+      fruit: { summary: "n/a", kept_context: "" },
+      keep_code: false,
+    });
+
+    expect(result).toEqual({ status: "ambiguous", occurrences: 2, hint: expect.stringContaining('quote: ""') });
+  });
+
+  it("returns in_compacted_zone with a hint when the quote only exists before the last compaction", async () => {
+    const { readSessionTranscript } = await import("mekiri-core");
+    vi.mocked(readSessionTranscript).mockResolvedValueOnce([
+      { type: "user", uuid: "u1", message: { role: "user", content: [{ type: "text", text: "start" }] } },
+      { type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: "This sentence lives before the compaction event." }] } },
+      { type: "system", compactMetadata: { trigger: "auto" } },
+      { type: "user", uuid: "summary-1", parentUuid: "a1", isCompactSummary: true },
+      { type: "assistant", uuid: "a2", message: { role: "assistant", content: [{ type: "text", text: "Fresh work after the compaction." }] } },
+    ] as never);
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    const result = await handlers.prune({
+      quote: "This sentence lives before the compaction",
+      note_type: "portal",
+      fruit: { summary: "n/a", kept_context: "" },
+      keep_code: false,
+    });
+
+    expect(result).toEqual({
+      status: "in_compacted_zone",
+      last_compact_message_id: "summary-1",
+      hint: expect.stringContaining('quote: ""'),
+    });
+  });
+});
+
+describe("prune handler: stopBoundary (Stop-hook-forced prune)", () => {
+  it("threads preserveFromQuote into the rule when bin/stop-hook.ts left a stopBoundary flag", async () => {
+    await saveHookState(projectDir, "s1", {
+      nudge: { callsSinceReset: 0, threshold: 5, consecutiveIgnored: 0, deferRemaining: 0, consecutiveTraceOnly: 0 },
+      stopBoundary: { lastAssistantMessage: "just-finished report text", setAt: "2026-01-01T00:00:00.000Z" },
+    });
+    const postControlRule = vi.fn(async () => {});
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule });
+
+    const result = await handlers.prune({
+      quote: "the answer is 42",
+      note_type: "portal",
+      fruit: { summary: "closed the episode after a forced Stop", kept_context: "" },
+      keep_code: false,
+    });
+
+    expect(result.status).toBe("ok");
+    expect(postControlRule).toHaveBeenCalledTimes(1);
+    expect(postControlRule.mock.calls[0][0].rule).toEqual({
+      id: (result as { rule_id: string }).rule_id,
+      matchQuote: "the answer is 42",
+      preserveFromQuote: "just-finished report text",
+    });
+  });
+
+  it("clears the stopBoundary flag after a cutting prune, without touching the nudge state", async () => {
+    await saveHookState(projectDir, "s1", {
+      nudge: { callsSinceReset: 3, threshold: 5, consecutiveIgnored: 1, deferRemaining: 0, consecutiveTraceOnly: 0 },
+      stopBoundary: { lastAssistantMessage: "just-finished report text", setAt: "2026-01-01T00:00:00.000Z" },
+    });
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    await handlers.prune({
+      quote: "the answer is 42",
+      note_type: "portal",
+      fruit: { summary: "closed the episode", kept_context: "" },
+      keep_code: false,
+    });
+
+    const after = await loadHookState(projectDir, "s1");
+    expect(after?.stopBoundary).toBeUndefined();
+    expect(after?.nudge).toEqual({ callsSinceReset: 3, threshold: 5, consecutiveIgnored: 1, deferRemaining: 0, consecutiveTraceOnly: 0 });
+  });
+
+  it("clears the stopBoundary flag after a trace-only prune (quote empty) too, since the agent still reacted to the block", async () => {
+    await saveHookState(projectDir, "s1", {
+      nudge: { callsSinceReset: 0, threshold: 5, consecutiveIgnored: 0, deferRemaining: 0, consecutiveTraceOnly: 0 },
+      stopBoundary: { lastAssistantMessage: "just-finished report text", setAt: "2026-01-01T00:00:00.000Z" },
+    });
+    const postControlRule = vi.fn(async () => {});
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule });
+
+    const result = await handlers.prune({
+      quote: "",
+      note_type: "portal",
+      fruit: { summary: "", kept_context: "nothing to cut, but the Stop-forced block still needs an answer" },
+      keep_code: false,
+    });
+
+    expect(result.status).toBe("ok");
+    expect(postControlRule).not.toHaveBeenCalled();
+    const after = await loadHookState(projectDir, "s1");
+    expect(after?.stopBoundary).toBeUndefined();
+  });
+
+  it("leaves hook state alone (no file even created) when no stopBoundary was ever set", async () => {
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    await handlers.prune({
+      quote: "the answer is 42",
+      note_type: "portal",
+      fruit: { summary: "ordinary prune, no Stop hook involved", kept_context: "" },
+      keep_code: false,
+    });
+
+    expect(await loadHookState(projectDir, "s1")).toBeUndefined();
   });
 });
 

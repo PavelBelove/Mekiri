@@ -5,5 +5,5 @@
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["bin/nudge-hook.ts", "src/nudgeHook.ts"]
+  "include": ["bin/nudge-hook.ts", "src/nudgeHook.ts", "bin/stop-hook.ts", "src/stopHook.ts", "src/hookState.ts"]
 }

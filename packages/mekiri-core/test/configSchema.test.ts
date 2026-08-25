@@ -15,7 +15,16 @@ describe("MekiriConfigSchema", () => {
       nudge: {
         deferCalls: 0,
       },
+      stopHook: {
+        enabled: false,
+      },
     });
+  });
+
+  it("keeps stopHook.enabled false by default, requiring an explicit patch to turn it on", () => {
+    const config = MekiriConfigSchema.parse({ stopHook: { enabled: true } });
+    expect(config.stopHook.enabled).toBe(true);
+    expect(defaultConfig().stopHook.enabled).toBe(false);
   });
 
   it("accepts a partial override merged onto defaults via parse", () => {

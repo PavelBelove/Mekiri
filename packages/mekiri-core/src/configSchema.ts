@@ -20,6 +20,16 @@ const NudgeSchema = z.object({
   deferCalls: z.number().int().min(0).max(20).default(0),
 });
 
+// Kill-switch for the Stop-hook-forced-prune mechanism (see
+// bin/stop-hook.ts / src/stopHook.ts). Defaults to false so merging the
+// feature branch into main never silently activates it -- enabling
+// requires an explicit `configure_mekiri({patch:{stopHook:{enabled:true}}}})`
+// on top of also wiring bin/stop-hook.ts into .claude/settings.json (two
+// independent switches, both required).
+const StopHookSchema = z.object({
+  enabled: z.boolean().default(false),
+});
+
 export const MekiriConfigSchema = z.object({
   // The outer default is *derived* by re-parsing {} through the same inner
   // schema, rather than a hand-written literal — zod v4's .default() does
@@ -31,6 +41,7 @@ export const MekiriConfigSchema = z.object({
   sprout: SproutSchema.default(() => SproutSchema.parse({})),
   priorities: PrioritiesSchema.default(() => PrioritiesSchema.parse({})),
   nudge: NudgeSchema.default(() => NudgeSchema.parse({})),
+  stopHook: StopHookSchema.default(() => StopHookSchema.parse({})),
 });
 
 export type MekiriConfig = z.infer<typeof MekiriConfigSchema>;

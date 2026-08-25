@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideNudge, isMekiriTool, isMutatingCall, randomThreshold } from "../src/nudgeHook.js";
+import { decideNudge, isMekiriTool, isMutatingCall, isTraceOnlyPrune, randomThreshold } from "../src/nudgeHook.js";
 
 describe("isMekiriTool", () => {
   it("matches MCP-qualified mekiri-proxy tool names", () => {
@@ -12,6 +12,25 @@ describe("isMekiriTool", () => {
     expect(isMekiriTool("Read")).toBe(false);
     expect(isMekiriTool("Bash")).toBe(false);
     expect(isMekiriTool("mcp__other-server__thing")).toBe(false);
+  });
+});
+
+describe("isTraceOnlyPrune", () => {
+  it("matches a prune call with an empty quote", () => {
+    expect(isTraceOnlyPrune("mcp__mekiri-proxy__prune", { quote: "" })).toBe(true);
+  });
+
+  it("does not match a prune call with a non-empty quote", () => {
+    expect(isTraceOnlyPrune("mcp__mekiri-proxy__prune", { quote: "something said earlier" })).toBe(false);
+  });
+
+  it("does not match other mekiri tools even with an empty-quote-shaped input", () => {
+    expect(isTraceOnlyPrune("mcp__mekiri-proxy__graft", { quote: "" })).toBe(false);
+  });
+
+  it("does not match when tool_input is missing or has no quote field", () => {
+    expect(isTraceOnlyPrune("mcp__mekiri-proxy__prune")).toBe(false);
+    expect(isTraceOnlyPrune("mcp__mekiri-proxy__prune", {})).toBe(false);
   });
 });
 
@@ -180,6 +199,44 @@ describe("decideNudge", () => {
 
       const { block } = decideNudge(spent.nextState, "Write");
       expect(block).toBeDefined();
+    });
+  });
+
+  describe("consecutiveTraceOnly (quote: \"\" overuse guard)", () => {
+    it("increments on a trace-only prune and resets on a cutting prune", () => {
+      const state = { callsSinceReset: 2, threshold: 5, consecutiveIgnored: 0, consecutiveTraceOnly: 1 };
+      const traceOnly = decideNudge(state, "mcp__mekiri-proxy__prune", { quote: "" });
+      expect(traceOnly.nextState.consecutiveTraceOnly).toBe(2);
+
+      const cutting = decideNudge(traceOnly.nextState, "mcp__mekiri-proxy__prune", { quote: "something real" });
+      expect(cutting.nextState.consecutiveTraceOnly).toBe(0);
+    });
+
+    it("resets consecutiveTraceOnly on a non-prune mekiri tool call", () => {
+      const state = { callsSinceReset: 0, threshold: 5, consecutiveIgnored: 0, consecutiveTraceOnly: 2 };
+      const { nextState } = decideNudge(state, "mcp__mekiri-proxy__graft");
+      expect(nextState.consecutiveTraceOnly).toBe(0);
+    });
+
+    it("does not increment consecutiveTraceOnly on non-mekiri calls", () => {
+      const state = { callsSinceReset: 0, threshold: 5, consecutiveIgnored: 0, consecutiveTraceOnly: 2 };
+      const { nextState } = decideNudge(state, "Read");
+      expect(nextState.consecutiveTraceOnly).toBe(2);
+    });
+
+    it("stays silent below the soft threshold", () => {
+      const state = { callsSinceReset: 0, threshold: 5, consecutiveIgnored: 0, consecutiveTraceOnly: 1 };
+      const { additionalContext, block } = decideNudge(state, "mcp__mekiri-proxy__prune", { quote: "" });
+      expect(additionalContext).toBeUndefined();
+      expect(block).toBeUndefined();
+    });
+
+    it("fires a soft (non-blocking) nudge once consecutiveTraceOnly reaches the threshold", () => {
+      const state = { callsSinceReset: 0, threshold: 5, consecutiveIgnored: 0, consecutiveTraceOnly: 2 };
+      const { nextState, additionalContext, block } = decideNudge(state, "mcp__mekiri-proxy__prune", { quote: "" });
+      expect(nextState.consecutiveTraceOnly).toBe(3);
+      expect(block).toBeUndefined();
+      expect(additionalContext).toContain("холостой");
     });
   });
 });

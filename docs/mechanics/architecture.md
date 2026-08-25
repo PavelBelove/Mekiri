@@ -38,9 +38,23 @@ The agent doesn't see internal message ids, but it does see its own text. The bo
 
 No "take the last occurrence" heuristics — a silent cut in the wrong place is worse than an explicit error.
 
+## Guaranteeing the tail: the `Stop` hook and `preserveFromQuote`
+
+`quote` alone addresses where a cut *starts*; it says nothing about where it *ends* — that end is always the `prune` tool call's own position in the transcript (its `tool_use`/`tool_result` pair, matched by `rule_id`), since two calls could plausibly quote textually identical content and a text-based end would be ambiguous.
+
+That's fine for an ordinary, agent-initiated `prune`: there's always at least a user message between "the report I just wrote" and "the `prune` call I'm now making", so the report never ends up inside the cut range by accident. A `Stop`-hook-forced `prune` (see [prune-and-graft.md](prune-and-graft.md#stop-forced-prune-guaranteeing-the-sessions-tail)) breaks that assumption: the hook fires *before* any new user message exists, so the just-written report and the forced `prune` call sit back-to-back with nothing between them — an end computed the ordinary way would swallow the report itself.
+
+`bin/stop-hook.ts` handles this by writing a one-shot `stopBoundary` flag (`.mekiri/hook-state/<session_id>.json`: `{ lastAssistantMessage, setAt }`) before it blocks. The next `prune` call reads and consumes that flag, threading it into its rewrite rule as `preserveFromQuote`. `rewriteMessages.ts` then computes the cut's end as `min(anchorEnd, indexOfLastAssistantMessageContaining(preserveFromQuote))` — pulling the boundary back to just before the report regardless of how message merging happened to lay out that specific turn (a separate message vs. one merged with the `tool_use` block both resolve correctly, since the search is content-based, not structural). The flag is cleared after that one `prune` call, cutting or not — same one-shot consume-then-clear pattern as `nudge.deferCalls` in `nudgeHook.ts`.
+
+A `stop_hook_active` loop guard (set by the platform on any turn that's already a forced Stop-continuation) prevents the hook from re-blocking a turn it already blocked. A `stopHook.enabled: false` kill-switch in `.mekiri/config.json` (default) fully disables the mechanism without touching `.claude/settings.json`.
+
 ## Interaction with auto-compaction
 
 The compacted part of the context is already a distillate; rolling back "into" it is pointless (there's nothing to clean there) and technically dangerous (quotes from consumed turns won't be found). The rollback zone is only the raw turns after the last compaction. Auto-compaction isn't disabled: it stays as an emergency valve, rollbacks just demote it from routine to a rare event.
+
+## The daemon is one process per machine
+
+`mekiri-proxy`'s daemon is keyed only by port (`8791`), not by which clone's code started it — `daemonEnsure.ts` checks `/health` on that port and, if something already answers, reuses it instead of spawning. If two clones of this repo exist on the same machine (e.g. one mid-upgrade, or set up for a different purpose), whichever one's daemon wins the port first silently serves *every* project's requests, regardless of which clone a given project's `.mcp.json` points at — `npm run typecheck` in the second clone won't catch this, since it only checks local source. `/health` returns `pid` and `sourceDir` for exactly this reason: to let an agent confirm which clone's daemon is actually live, not just that something answered `ok`. If they don't match the clone you expect, kill that process and let the next Mekiri tool call respawn the daemon fresh from the right one.
 
 ## Target platform
 

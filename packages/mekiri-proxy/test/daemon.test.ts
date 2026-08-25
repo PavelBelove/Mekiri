@@ -62,7 +62,9 @@ describe("daemon", () => {
   it("responds to /health", async () => {
     const { status, body } = await jsonRequest(DAEMON_PORT, { path: "/health", method: "GET" });
     expect(status).toBe(200);
-    expect(body).toEqual({ status: "ok", service: "mekiri-proxy-daemon" });
+    expect(body).toMatchObject({ status: "ok", service: "mekiri-proxy-daemon" });
+    expect(typeof (body as { pid: number }).pid).toBe("number");
+    expect(typeof (body as { sourceDir: string }).sourceDir).toBe("string");
   });
 
   it("relays a request unchanged when no rule is registered for its session", async () => {
@@ -236,6 +238,6 @@ describe("daemon", () => {
 
     const { status, body } = await jsonRequest(DAEMON_PORT, { path: "/health", method: "GET" });
     expect(status).toBe(200);
-    expect(body).toEqual({ status: "ok", service: "mekiri-proxy-daemon" });
+    expect(body).toMatchObject({ status: "ok", service: "mekiri-proxy-daemon" });
   });
 });

@@ -1,6 +1,14 @@
 export interface RewriteRule {
   id: string;
   matchQuote: string;
+  /** Set for Stop-forced prune calls (see bin/stop-hook.ts / hookState.ts's
+   *  stopBoundary): the verbatim report the agent just wrote, which must
+   *  survive the cut even though it sits right before this rule's own
+   *  tool_use anchor with nothing (no user message) separating them.
+   *  When present, resolveRanges pulls the cut range's end back to just
+   *  before the last assistant message containing this text instead of the
+   *  tool_use anchor. */
+  preserveFromQuote?: string;
 }
 
 interface MessageShape {
@@ -21,6 +29,30 @@ function asMessage(m: unknown): MessageShape {
 // instead of trusting a precomputed guess.
 function findAssistantTextIndex(messages: unknown[], quote: string): number | undefined {
   for (let i = 0; i < messages.length; i++) {
+    const m = asMessage(messages[i]);
+    if (m.role !== "assistant") continue;
+    const content = m.content;
+    if (!Array.isArray(content)) continue;
+    const hit = content.some(
+      (block) =>
+        typeof block === "object" &&
+        block !== null &&
+        (block as { type?: string }).type === "text" &&
+        typeof (block as { text?: unknown }).text === "string" &&
+        (block as { text: string }).text.includes(quote)
+    );
+    if (hit) return i;
+  }
+  return undefined;
+}
+
+// Same matching predicate as findAssistantTextIndex, but searches backward
+// from just before `beforeIndex` (the rule's own tool_use anchor) instead of
+// forward from the start of the array. Forward search would risk matching an
+// older, coincidentally-similar assistant message deeper in history instead
+// of the report that was actually just written for this specific prune call.
+function findLastAssistantTextIndexBefore(messages: unknown[], quote: string, beforeIndex: number): number | undefined {
+  for (let i = beforeIndex - 1; i >= 0; i--) {
     const m = asMessage(messages[i]);
     if (m.role !== "assistant") continue;
     const content = m.content;
@@ -106,8 +138,13 @@ interface ResolvedRange {
 function resolveRanges(messages: unknown[], rules: RewriteRule[]): ResolvedRange[] {
   const ranges: ResolvedRange[] = [];
   for (const rule of rules) {
-    const end = findPruneResultAnchor(messages, rule.id);
-    if (end === undefined) continue; // this rule's own prune call hasn't reached this request's array yet
+    const anchorEnd = findPruneResultAnchor(messages, rule.id);
+    if (anchorEnd === undefined) continue; // this rule's own prune call hasn't reached this request's array yet
+    let end = anchorEnd;
+    if (rule.preserveFromQuote) {
+      const reportIdx = findLastAssistantTextIndexBefore(messages, rule.preserveFromQuote, anchorEnd);
+      if (reportIdx !== undefined) end = Math.min(end, reportIdx);
+    }
     const start = findAssistantTextIndex(messages, rule.matchQuote);
     if (start === undefined || start > end) continue;
     ranges.push({ start, end });

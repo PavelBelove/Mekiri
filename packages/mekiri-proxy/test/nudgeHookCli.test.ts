@@ -40,8 +40,8 @@ describe("nudge-hook CLI", () => {
 
     const statePath = path.join(workDir, ".mekiri", "hook-state", `${sessionId}.json`);
     const state = JSON.parse(await fs.readFile(statePath, "utf8"));
-    expect(state.callsSinceReset).toBe(0);
-    expect(state.threshold).toBeGreaterThanOrEqual(2);
+    expect(state.nudge.callsSinceReset).toBe(0);
+    expect(state.nudge.threshold).toBeGreaterThanOrEqual(2);
   });
 
   it("fires the nudge once enough non-mekiri calls accumulate", async () => {
@@ -49,7 +49,7 @@ describe("nudge-hook CLI", () => {
     const sessionId = "session-b";
     const statePath = path.join(workDir, ".mekiri", "hook-state", `${sessionId}.json`);
     await fs.mkdir(path.dirname(statePath), { recursive: true });
-    await fs.writeFile(statePath, JSON.stringify({ callsSinceReset: 1, threshold: 2 }), "utf8");
+    await fs.writeFile(statePath, JSON.stringify({ nudge: { callsSinceReset: 1, threshold: 2 } }), "utf8");
 
     const { stdout, exitCode } = await runHook({ session_id: sessionId, tool_name: "Bash" }, workDir);
 
@@ -59,7 +59,7 @@ describe("nudge-hook CLI", () => {
     expect(parsed.hookSpecificOutput.additionalContext).toContain("Mekiri");
 
     const state = JSON.parse(await fs.readFile(statePath, "utf8"));
-    expect(state.callsSinceReset).toBe(0);
+    expect(state.nudge.callsSinceReset).toBe(0);
   });
 
   it("emits a decision:block once consecutiveIgnored is already at the hard-block threshold, for a mutating call", async () => {
@@ -67,7 +67,7 @@ describe("nudge-hook CLI", () => {
     const sessionId = "session-blocked";
     const statePath = path.join(workDir, ".mekiri", "hook-state", `${sessionId}.json`);
     await fs.mkdir(path.dirname(statePath), { recursive: true });
-    await fs.writeFile(statePath, JSON.stringify({ callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3 }), "utf8");
+    await fs.writeFile(statePath, JSON.stringify({ nudge: { callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3 } }), "utf8");
 
     const { stdout, exitCode } = await runHook({ session_id: sessionId, tool_name: "Write" }, workDir);
 
@@ -77,7 +77,7 @@ describe("nudge-hook CLI", () => {
     expect(parsed.reason).toContain("Mekiri");
 
     const state = JSON.parse(await fs.readFile(statePath, "utf8"));
-    expect(state.consecutiveIgnored).toBe(3);
+    expect(state.nudge.consecutiveIgnored).toBe(3);
   });
 
   it("lets a verification-shaped call through instead of blocking once hard-blocked", async () => {
@@ -85,7 +85,7 @@ describe("nudge-hook CLI", () => {
     const sessionId = "session-verify";
     const statePath = path.join(workDir, ".mekiri", "hook-state", `${sessionId}.json`);
     await fs.mkdir(path.dirname(statePath), { recursive: true });
-    await fs.writeFile(statePath, JSON.stringify({ callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3 }), "utf8");
+    await fs.writeFile(statePath, JSON.stringify({ nudge: { callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3 } }), "utf8");
 
     const { stdout, exitCode } = await runHook(
       { session_id: sessionId, tool_name: "Bash", tool_input: { command: "npm test" } },
@@ -98,7 +98,7 @@ describe("nudge-hook CLI", () => {
     expect(parsed.hookSpecificOutput.additionalContext).toContain("Хард-блок активен");
 
     const state = JSON.parse(await fs.readFile(statePath, "utf8"));
-    expect(state.consecutiveIgnored).toBe(3);
+    expect(state.nudge.consecutiveIgnored).toBe(3);
   });
 
   it("consumes config.nudge.deferCalls as a one-shot grace grant and resets it to 0 on disk", async () => {
@@ -107,7 +107,7 @@ describe("nudge-hook CLI", () => {
     const statePath = path.join(workDir, ".mekiri", "hook-state", `${sessionId}.json`);
     const configPath = path.join(workDir, ".mekiri", "config.json");
     await fs.mkdir(path.dirname(statePath), { recursive: true });
-    await fs.writeFile(statePath, JSON.stringify({ callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3 }), "utf8");
+    await fs.writeFile(statePath, JSON.stringify({ nudge: { callsSinceReset: 0, threshold: 7, consecutiveIgnored: 3 } }), "utf8");
     await fs.writeFile(configPath, JSON.stringify({ nudge: { deferCalls: 2 } }), "utf8");
 
     const { stdout, exitCode } = await runHook(
@@ -119,7 +119,7 @@ describe("nudge-hook CLI", () => {
     expect(stdout).toBe("");
 
     const state = JSON.parse(await fs.readFile(statePath, "utf8"));
-    expect(state.deferRemaining).toBe(2);
+    expect(state.nudge.deferRemaining).toBe(2);
 
     const config = JSON.parse(await fs.readFile(configPath, "utf8"));
     expect(config.nudge.deferCalls).toBe(0);
@@ -130,7 +130,7 @@ describe("nudge-hook CLI", () => {
     const sessionId = "session-unblock";
     const statePath = path.join(workDir, ".mekiri", "hook-state", `${sessionId}.json`);
     await fs.mkdir(path.dirname(statePath), { recursive: true });
-    await fs.writeFile(statePath, JSON.stringify({ callsSinceReset: 0, threshold: 7, consecutiveIgnored: 4 }), "utf8");
+    await fs.writeFile(statePath, JSON.stringify({ nudge: { callsSinceReset: 0, threshold: 7, consecutiveIgnored: 4 } }), "utf8");
 
     const { stdout, exitCode } = await runHook(
       { session_id: sessionId, tool_name: "mcp__mekiri-proxy__prune" },
@@ -141,7 +141,27 @@ describe("nudge-hook CLI", () => {
     expect(stdout).toBe("");
 
     const state = JSON.parse(await fs.readFile(statePath, "utf8"));
-    expect(state.consecutiveIgnored).toBe(0);
+    expect(state.nudge.consecutiveIgnored).toBe(0);
+  });
+
+  it("preserves an existing stopBoundary flag untouched across a PostToolUse firing", async () => {
+    workDir = await fs.mkdtemp(path.join(tmpdir(), "nudge-hook-test-"));
+    const sessionId = "session-stopboundary";
+    const statePath = path.join(workDir, ".mekiri", "hook-state", `${sessionId}.json`);
+    const stopBoundary = { lastAssistantMessage: "final report text", setAt: "2026-08-25T12:00:00.000Z" };
+    await fs.mkdir(path.dirname(statePath), { recursive: true });
+    await fs.writeFile(
+      statePath,
+      JSON.stringify({ nudge: { callsSinceReset: 1, threshold: 5 }, stopBoundary }),
+      "utf8",
+    );
+
+    const { exitCode } = await runHook({ session_id: sessionId, tool_name: "Read" }, workDir);
+
+    expect(exitCode).toBe(0);
+    const state = JSON.parse(await fs.readFile(statePath, "utf8"));
+    expect(state.stopBoundary).toEqual(stopBoundary);
+    expect(state.nudge.callsSinceReset).toBe(2);
   });
 
   it("silently exits 0 on malformed stdin", async () => {

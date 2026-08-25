@@ -1,6 +1,9 @@
 const MIN_THRESHOLD = 2;
 const MAX_THRESHOLD = 10;
 const HARD_BLOCK_AFTER = 3;
+/** Soft (non-blocking) threshold for consecutive trace-only (`quote: ""`)
+ *  `prune` calls with no real cut in between -- see isTraceOnlyPrune. */
+const TRACE_ONLY_SOFT_THRESHOLD = 3;
 
 /** A soft first nudge with a built-in "just continue" escape hatch was tried
  *  and demonstrably failed: the agent read the escalating fire as advisory,
@@ -34,6 +37,13 @@ export interface NudgeState {
    *  comment above nudgeText), this is auditable and bounded by the config
    *  schema's max, not an unlimited self-granted pass. */
   deferRemaining: number;
+  /** Count of consecutive `prune` calls with `quote: ""` (trace-only, no
+   *  real cut) with no cutting prune/other-tool-call in between. Resets to 0
+   *  on any Mekiri call that isn't a trace-only prune. Exists to counter the
+   *  failure mode on the *other* side of quote:"" being a fully honest
+   *  escape hatch (see isTraceOnlyPrune): using it so often it stops meaning
+   *  anything, instead of ever finding a real cut boundary. */
+  consecutiveTraceOnly: number;
 }
 
 /** Random integer in [MIN_THRESHOLD, MAX_THRESHOLD] -- a statistical stand-in
@@ -50,6 +60,31 @@ export function randomThreshold(): number {
  *  `mcp__<server>__<tool>`. */
 export function isMekiriTool(toolName: string): boolean {
   return toolName.includes("mekiri-proxy__");
+}
+
+function extractQuote(toolInput: unknown): string | undefined {
+  if (toolInput !== null && typeof toolInput === "object" && "quote" in toolInput) {
+    const quote = (toolInput as { quote?: unknown }).quote;
+    return typeof quote === "string" ? quote : undefined;
+  }
+  return undefined;
+}
+
+/** A `prune` call with `quote: ""` is the fully honest "trace-only" escape
+ *  documented in mekiri-gate SKILL.md's quote-boundary section and surfaced
+ *  via the `hint` field on not_found/ambiguous/in_compacted_zone in
+ *  mcpServer.ts. Detecting it here (distinct from isMekiriTool) lets
+ *  decideNudge track how often it's used with no real cut in between, per
+ *  the user's explicit "не халявить" requirement -- the escape must stay
+ *  honest, not become a way to dodge ever finding a real cut boundary. */
+export function isTraceOnlyPrune(toolName: string, toolInput?: unknown): boolean {
+  if (!toolName.includes("mekiri-proxy__prune")) return false;
+  return extractQuote(toolInput) === "";
+}
+
+function traceOnlyOveruseText(consecutiveTraceOnly: number): string {
+  return `[Mekiri] ${consecutiveTraceOnly}-й холостой prune (quote: "") подряд без единого реального среза. ` +
+    `Это правда так — ни разу не было эпизода, что резать? Или это стало способом обходить поиск границы вместо честного prune?`;
 }
 
 /** Reason text for a hard PostToolUse block. Unlike nudgeText, this is not
@@ -132,24 +167,38 @@ export function decideNudge(
   deferCallsFromConfig = 0,
 ): DecideNudgeResult {
   if (state === undefined) {
-    return {
-      nextState: { callsSinceReset: 0, threshold: randomThreshold(), consecutiveIgnored: 0, deferRemaining: 0 },
-    };
-  }
-
-  if (isMekiriTool(toolName)) {
+    const consecutiveTraceOnly = isTraceOnlyPrune(toolName, toolInput) ? 1 : 0;
     return {
       nextState: {
         callsSinceReset: 0,
         threshold: randomThreshold(),
         consecutiveIgnored: 0,
-        deferRemaining: deferCallsFromConfig,
+        deferRemaining: 0,
+        consecutiveTraceOnly,
       },
     };
   }
 
+  if (isMekiriTool(toolName)) {
+    const consecutiveTraceOnly = isTraceOnlyPrune(toolName, toolInput)
+      ? (state.consecutiveTraceOnly ?? 0) + 1
+      : 0;
+    const nextState: NudgeState = {
+      callsSinceReset: 0,
+      threshold: randomThreshold(),
+      consecutiveIgnored: 0,
+      deferRemaining: deferCallsFromConfig,
+      consecutiveTraceOnly,
+    };
+    if (consecutiveTraceOnly >= TRACE_ONLY_SOFT_THRESHOLD) {
+      return { nextState, additionalContext: traceOnlyOveruseText(consecutiveTraceOnly) };
+    }
+    return { nextState };
+  }
+
   const consecutiveIgnoredSoFar = state.consecutiveIgnored ?? 0;
   const deferRemainingSoFar = state.deferRemaining ?? 0;
+  const consecutiveTraceOnlySoFar = state.consecutiveTraceOnly ?? 0;
 
   // A structural grace period always wins over both the soft nudge and the
   // hard block: it was explicitly, auditably requested via configure_mekiri,
@@ -185,7 +234,13 @@ export function decideNudge(
   const callsSinceReset = state.callsSinceReset + 1;
   if (callsSinceReset >= state.threshold) {
     const consecutiveIgnored = consecutiveIgnoredSoFar + 1;
-    const nextState = { callsSinceReset: 0, threshold: randomThreshold(), consecutiveIgnored, deferRemaining: 0 };
+    const nextState = {
+      callsSinceReset: 0,
+      threshold: randomThreshold(),
+      consecutiveIgnored,
+      deferRemaining: 0,
+      consecutiveTraceOnly: consecutiveTraceOnlySoFar,
+    };
     if (consecutiveIgnored >= HARD_BLOCK_AFTER) {
       return { nextState, block: { reason: blockReason(consecutiveIgnored) } };
     }
@@ -193,6 +248,12 @@ export function decideNudge(
   }
 
   return {
-    nextState: { callsSinceReset, threshold: state.threshold, consecutiveIgnored: consecutiveIgnoredSoFar, deferRemaining: 0 },
+    nextState: {
+      callsSinceReset,
+      threshold: state.threshold,
+      consecutiveIgnored: consecutiveIgnoredSoFar,
+      deferRemaining: 0,
+      consecutiveTraceOnly: consecutiveTraceOnlySoFar,
+    },
   };
 }
