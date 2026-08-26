@@ -6,6 +6,7 @@ import { rewriteMessages } from "./rewriteMessages.js";
 import type { RewriteRule } from "./rewriteMessages.js";
 import { extractSessionId } from "./sessionMetadata.js";
 import { loadAllRules, appendRule } from "./ruleStore.js";
+import { appendNewShadowMessages } from "./shadowTranscript.js";
 
 export interface DaemonOptions {
   port: number;
@@ -68,6 +69,14 @@ export async function createDaemon(options: DaemonOptions): Promise<DaemonHandle
         try {
           const parsed = JSON.parse(bodyBuf.toString("utf8"));
           const sessionId = extractSessionId(parsed);
+          // Archive the full, uncut wire-level history before rewriteMessages
+          // mutates parsed.messages in place -- this is the durable source
+          // graft reads from, independent of Claude Code's own mutable .jsonl
+          // file (see shadowTranscript.ts). Archival failing must never break
+          // the actual proxy request.
+          if (sessionId) {
+            await appendNewShadowMessages(sessionId, parsed.messages).catch(() => {});
+          }
           const sessionRules = sessionId ? rules.get(sessionId) : undefined;
           if (sessionRules && sessionRules.length > 0) {
             parsed.messages = rewriteMessages(parsed.messages, sessionRules);

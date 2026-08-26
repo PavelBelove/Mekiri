@@ -22,7 +22,12 @@ dist/
 # subagent-driven-development ledger/scratch (per superpowers:subagent-driven-development)
 .superpowers/
 
-# mekiri-host runtime state (audit log, config) created by actually using prune/sprout
+# mekiri-host runtime state (audit log, config, session library) created by
+# actually using prune/sprout -- SECURITY: this holds session distillates,
+# which can contain whatever the user or an agent put into the conversation,
+# secrets and personal data included. Never remove this line, and check any
+# other project you wire Mekiri into has the equivalent -- see
+# packages/mekiri-proxy/INSTALL.md for the reasoning.
 .mekiri/
 
 # git worktrees (per superpowers:using-git-worktrees)

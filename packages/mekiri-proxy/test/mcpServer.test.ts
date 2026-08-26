@@ -34,6 +34,16 @@ vi.mock("mekiri-core", async () => {
   };
 });
 
+// The durable archive prune/graft now read from (mekiri-proxy's own shadow
+// transcript, not Claude Code's file) -- mocked separately from the
+// mekiri-core mock above, mirroring the same fixture so cutting/no-cut
+// prune calls resolve rawEndLine the same way the live-transcript mock
+// above resolves quote validation.
+vi.mock("../src/shadowTranscript.js", () => ({
+  readShadowTranscript: vi.fn(async () => FIXTURE_TRANSCRIPT),
+  readShadowTranscriptOrNull: vi.fn(async () => FIXTURE_TRANSCRIPT),
+}));
+
 vi.mock("../src/spawnClone.js", () => ({
   spawnClone: vi.fn(async () => ({ childSessionId: "child-1", result: "done" })),
 }));
@@ -67,7 +77,7 @@ describe("prune handler: cutting calls (quote non-empty)", () => {
     const result = await handlers.prune({
       quote: "the answer is 42",
       note_type: "portal",
-      fruit: { summary: "found the answer", kept_context: "" },
+      fruit: { summary: "found the answer", kept_context: "", conclusion: "found the answer" },
       keep_code: false,
     });
 
@@ -80,6 +90,30 @@ describe("prune handler: cutting calls (quote non-empty)", () => {
     expect(postControlRule).toHaveBeenCalledTimes(1);
     expect(postControlRule.mock.calls[0][0].sessionId).toBe("s1");
     expect(postControlRule.mock.calls[0][0].rule).toEqual({ id: result.rule_id, matchQuote: "the answer is 42" });
+  });
+
+  it("labels the capsule.md entry with fruit.conclusion, not a truncated fruit.summary", async () => {
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    const result = await handlers.prune({
+      quote: "the answer is 42",
+      note_type: "portal",
+      fruit: {
+        summary:
+          "Open discussion threads from this turn, no action taken (by design, exploratory / user's call for later): per-user capsule namespacing, cloud/team library, the data-satanist point, and the SQLite-vs-flat-files decision.",
+        kept_context: "",
+        conclusion: "SQLite rejected: sequential-read pattern favors flat files",
+      },
+      keep_code: false,
+    });
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+
+    const { readCapsule } = await import("mekiri-core");
+    const capsule = await readCapsule(projectDir, "s1");
+    expect(capsule).toContain("SQLite rejected: sequential-read pattern favors flat files");
+    expect(capsule).not.toContain("Open discussion threads from this turn");
   });
 
   it("generates a distinct rule_id for each prune call", async () => {
@@ -95,13 +129,13 @@ describe("prune handler: cutting calls (quote non-empty)", () => {
     const first = await handlers.prune({
       quote: "the answer is 42",
       note_type: "portal",
-      fruit: { summary: "first", kept_context: "" },
+      fruit: { summary: "first", kept_context: "", conclusion: "first" },
       keep_code: false,
     });
     const second = await handlers.prune({
       quote: "the answer is 42",
       note_type: "portal",
-      fruit: { summary: "second", kept_context: "" },
+      fruit: { summary: "second", kept_context: "", conclusion: "second" },
       keep_code: false,
     });
 
@@ -130,7 +164,7 @@ describe("prune handler: cutting calls (quote non-empty)", () => {
     const result = await handlers.prune({
       quote: "the answer is 42",
       note_type: "portal",
-      fruit: { summary: "translated the file", files_touched: [{ path: "README.md", change: "translated to English" }], kept_context: "" },
+      fruit: { summary: "translated the file", files_touched: [{ path: "README.md", change: "translated to English" }], kept_context: "", conclusion: "translated README to English" },
       keep_code: true,
     });
 
@@ -162,7 +196,7 @@ describe("prune handler: cutting calls (quote non-empty)", () => {
     const result = await handlers.prune({
       quote: "the answer is 42",
       note_type: "portal",
-      fruit: { summary: "translated the file", files_touched: [{ path: "README.md", change: "translated to English" }], kept_context: "" },
+      fruit: { summary: "translated the file", files_touched: [{ path: "README.md", change: "translated to English" }], kept_context: "", conclusion: "translated README to English" },
       keep_code: true,
     });
 
@@ -177,7 +211,7 @@ describe("prune handler: cutting calls (quote non-empty)", () => {
     const result = await handlers.prune({
       quote: "the answer is 42",
       note_type: "death_reload",
-      fruit: { tried: "assumed a race condition", ruled_out: "not a race condition", kept_context: "" },
+      fruit: { tried: "assumed a race condition", ruled_out: "not a race condition", kept_context: "", conclusion: "race condition ruled out" },
       keep_code: false,
     });
 
@@ -196,7 +230,7 @@ describe("prune handler: cutting calls (quote non-empty)", () => {
     const result = await handlers.prune({
       quote: "this text does not appear anywhere in the transcript",
       note_type: "portal",
-      fruit: { summary: "n/a", kept_context: "" },
+      fruit: { summary: "n/a", kept_context: "", conclusion: "n/a" },
       keep_code: false,
     });
 
@@ -215,7 +249,7 @@ describe("prune handler: cutting calls (quote non-empty)", () => {
     const result = await handlers.prune({
       quote: "Checking the database schema for issues",
       note_type: "portal",
-      fruit: { summary: "n/a", kept_context: "" },
+      fruit: { summary: "n/a", kept_context: "", conclusion: "n/a" },
       keep_code: false,
     });
 
@@ -236,7 +270,7 @@ describe("prune handler: cutting calls (quote non-empty)", () => {
     const result = await handlers.prune({
       quote: "This sentence lives before the compaction",
       note_type: "portal",
-      fruit: { summary: "n/a", kept_context: "" },
+      fruit: { summary: "n/a", kept_context: "", conclusion: "n/a" },
       keep_code: false,
     });
 
@@ -260,7 +294,7 @@ describe("prune handler: stopBoundary (Stop-hook-forced prune)", () => {
     const result = await handlers.prune({
       quote: "the answer is 42",
       note_type: "portal",
-      fruit: { summary: "closed the episode after a forced Stop", kept_context: "" },
+      fruit: { summary: "closed the episode after a forced Stop", kept_context: "", conclusion: "closed the episode after a forced Stop" },
       keep_code: false,
     });
 
@@ -283,7 +317,7 @@ describe("prune handler: stopBoundary (Stop-hook-forced prune)", () => {
     await handlers.prune({
       quote: "the answer is 42",
       note_type: "portal",
-      fruit: { summary: "closed the episode", kept_context: "" },
+      fruit: { summary: "closed the episode", kept_context: "", conclusion: "closed the episode" },
       keep_code: false,
     });
 
@@ -303,7 +337,7 @@ describe("prune handler: stopBoundary (Stop-hook-forced prune)", () => {
     const result = await handlers.prune({
       quote: "",
       note_type: "portal",
-      fruit: { summary: "", kept_context: "nothing to cut, but the Stop-forced block still needs an answer" },
+      fruit: { summary: "", kept_context: "nothing to cut, but the Stop-forced block still needs an answer", conclusion: "nothing to cut, Stop-forced block answered" },
       keep_code: false,
     });
 
@@ -319,7 +353,7 @@ describe("prune handler: stopBoundary (Stop-hook-forced prune)", () => {
     await handlers.prune({
       quote: "the answer is 42",
       note_type: "portal",
-      fruit: { summary: "ordinary prune, no Stop hook involved", kept_context: "" },
+      fruit: { summary: "ordinary prune, no Stop hook involved", kept_context: "", conclusion: "ordinary prune, no Stop hook involved" },
       keep_code: false,
     });
 
@@ -372,6 +406,7 @@ describe("prune handler: pure archive calls (quote empty)", () => {
         summary: "",
         kept_context: "important state before a risky refactor",
         files_touched: [{ path: "src/foo.ts", change: "modified" }],
+        conclusion: "important state before a risky refactor",
       },
       keep_code: false,
     });
@@ -401,7 +436,7 @@ describe("prune handler: pure archive calls (quote empty)", () => {
     const result = await handlers.prune({
       quote: "",
       note_type: "portal",
-      fruit: { summary: "", kept_context: "important block, not to be cut" },
+      fruit: { summary: "", kept_context: "important block, not to be cut", conclusion: "important block, not to be cut" },
       keep_code: false,
     });
 
@@ -418,7 +453,7 @@ describe("prune handler: pure archive calls (quote empty)", () => {
     await handlers.prune({
       quote: "",
       note_type: "portal",
-      fruit: { summary: "", kept_context: keptContext },
+      fruit: { summary: "", kept_context: keptContext, conclusion: "marked range" },
       keep_code: false,
     });
 
@@ -433,7 +468,7 @@ describe("prune handler: pure archive calls (quote empty)", () => {
     const result = await handlers.prune({
       quote: "",
       note_type: "portal",
-      fruit: { summary: "", kept_context: "" },
+      fruit: { summary: "", kept_context: "", conclusion: "nothing to record" },
       keep_code: false,
     });
 
@@ -448,7 +483,7 @@ describe("prune handler: pure archive calls (quote empty)", () => {
     const result = await handlers.prune({
       quote: "",
       note_type: "portal",
-      fruit: { summary: "", kept_context: "no files touched here, still a valid archive call" },
+      fruit: { summary: "", kept_context: "no files touched here, still a valid archive call", conclusion: "no files touched, still a valid archive call" },
       keep_code: true,
     });
 
@@ -465,6 +500,7 @@ describe("prune handler: pure archive calls (quote empty)", () => {
         summary: "",
         kept_context: "important block",
         files_touched: [{ path: "src/foo.ts", change: "modified" }],
+        conclusion: "important block",
       },
       keep_code: false,
     });
@@ -482,13 +518,13 @@ describe("graft handler", () => {
     await handlers.prune({
       quote: "",
       note_type: "portal",
-      fruit: { summary: "", kept_context: "first tagged snapshot", files_touched: [{ path: "a.ts", change: "modified" }] },
+      fruit: { summary: "", kept_context: "first tagged snapshot", files_touched: [{ path: "a.ts", change: "modified" }], conclusion: "first tagged snapshot" },
       keep_code: false,
     });
     await handlers.prune({
       quote: "",
       note_type: "portal",
-      fruit: { summary: "", kept_context: "second tagged snapshot", files_touched: [{ path: "b.ts", change: "added" }] },
+      fruit: { summary: "", kept_context: "second tagged snapshot", files_touched: [{ path: "b.ts", change: "added" }], conclusion: "second tagged snapshot" },
       keep_code: false,
     });
 
@@ -507,7 +543,7 @@ describe("graft handler", () => {
     const tagged = await handlers.prune({
       quote: "",
       note_type: "portal",
-      fruit: { summary: "", kept_context: "graftable snapshot content", files_touched: [{ path: "a.ts", change: "modified" }] },
+      fruit: { summary: "", kept_context: "graftable snapshot content", files_touched: [{ path: "a.ts", change: "modified" }], conclusion: "graftable snapshot content" },
       keep_code: false,
     });
     if (tagged.status !== "ok") throw new Error("unreachable");
@@ -538,7 +574,7 @@ describe("graft handler", () => {
     const pruned = await handlers.prune({
       quote: "the answer is 42",
       note_type: "portal",
-      fruit: { summary: "pruned branch about the answer", kept_context: "" },
+      fruit: { summary: "pruned branch about the answer", kept_context: "", conclusion: "pruned branch about the answer" },
       keep_code: false,
     });
     if (pruned.status !== "ok") throw new Error("unreachable");
@@ -562,7 +598,7 @@ describe("graft handler", () => {
     const taggedByS1 = await handlersS1.prune({
       quote: "",
       note_type: "portal",
-      fruit: { summary: "", kept_context: "snapshot tagged from session s1", files_touched: [{ path: "a.ts", change: "modified" }] },
+      fruit: { summary: "", kept_context: "snapshot tagged from session s1", files_touched: [{ path: "a.ts", change: "modified" }], conclusion: "snapshot tagged from session s1" },
       keep_code: false,
     });
     if (taggedByS1.status !== "ok") throw new Error("unreachable");
@@ -610,13 +646,13 @@ describe("graft handler", () => {
     const tagged = await handlers.prune({
       quote: "",
       note_type: "portal",
-      fruit: { summary: "", kept_context: "snapshot with a since-vanished transcript" },
+      fruit: { summary: "", kept_context: "snapshot with a since-vanished transcript", conclusion: "snapshot with a since-vanished transcript" },
       keep_code: false,
     });
     if (tagged.status !== "ok") throw new Error("unreachable");
 
-    const { readSessionTranscriptOrNull } = await import("mekiri-core");
-    vi.mocked(readSessionTranscriptOrNull).mockResolvedValueOnce(null);
+    const { readShadowTranscriptOrNull } = await import("../src/shadowTranscript.js");
+    vi.mocked(readShadowTranscriptOrNull).mockResolvedValueOnce(null);
 
     const result = await handlers.graft({ target: tagged.rule_id });
 
@@ -631,18 +667,18 @@ describe("graft handler", () => {
       uuid: `a${i}`,
       message: { role: "assistant", content: [{ type: "text", text: `line ${i} `.repeat(20) }] },
     }));
-    const { readSessionTranscriptOrNull } = await import("mekiri-core");
-    vi.mocked(readSessionTranscriptOrNull).mockResolvedValueOnce(hugeTranscript);
+    const { readShadowTranscriptOrNull } = await import("../src/shadowTranscript.js");
+    vi.mocked(readShadowTranscriptOrNull).mockResolvedValueOnce(hugeTranscript);
 
     const tagged = await handlers.prune({
       quote: "",
       note_type: "portal",
-      fruit: { summary: "", kept_context: "huge snapshot" },
+      fruit: { summary: "", kept_context: "huge snapshot", conclusion: "huge snapshot" },
       keep_code: false,
     });
     if (tagged.status !== "ok") throw new Error("unreachable");
 
-    vi.mocked(readSessionTranscriptOrNull).mockResolvedValueOnce(hugeTranscript);
+    vi.mocked(readShadowTranscriptOrNull).mockResolvedValueOnce(hugeTranscript);
     const result = await handlers.graft({ target: tagged.rule_id });
 
     expect(result.status).toBe("ok");

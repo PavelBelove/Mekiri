@@ -4,7 +4,6 @@ import {
   validateFruit,
   resolveBoundaryWithRetry,
   readSessionTranscript,
-  readSessionTranscriptOrNull,
   renderRawLines,
   loadConfig,
   applyConfigPatch,
@@ -20,6 +19,7 @@ import type { NoteType, PortalFruit, DeathReloadFruit, MekiriConfig, TreeMetrics
 import type { RewriteRule } from "./rewriteMessages.js";
 import { spawnClone } from "./spawnClone.js";
 import { loadHookState, saveHookState } from "./hookState.js";
+import { readShadowTranscript, readShadowTranscriptOrNull } from "./shadowTranscript.js";
 
 export interface McpServerContext {
   sessionId: string;
@@ -48,28 +48,23 @@ export function postControlRuleOverHttp(daemonPort: number) {
 function renderDistillate(noteType: NoteType, fruit: PortalFruit | DeathReloadFruit): string {
   if (noteType === "portal") {
     const p = fruit as PortalFruit;
-    const parts = [`Дистиллят: ${p.summary}`];
-    if (p.files_touched?.length) parts.push(`Изменённые файлы: ${p.files_touched.map((f) => `${f.path} (${f.change})`).join(", ")}`);
-    if (p.gotchas) parts.push(`Подводные камни: ${p.gotchas}`);
+    const parts = [`Distillate: ${p.summary}`];
+    if (p.files_touched?.length) parts.push(`Files touched: ${p.files_touched.map((f) => `${f.path} (${f.change})`).join(", ")}`);
+    if (p.gotchas) parts.push(`Gotchas: ${p.gotchas}`);
     return parts.join("\n");
   }
   const d = fruit as DeathReloadFruit;
-  const parts = [`Пробовал: ${d.tried}`, `Исключено: ${d.ruled_out}`];
-  if (d.facts_learned) parts.push(`Факты: ${d.facts_learned}`);
+  const parts = [`Tried: ${d.tried}`, `Ruled out: ${d.ruled_out}`];
+  if (d.facts_learned) parts.push(`Facts: ${d.facts_learned}`);
   return parts.join("\n");
 }
 
-/** First line of the relevant fruit field (`summary` for portal, `tried` for
- *  death_reload), trimmed and collapsed to a single line, truncated to ~80
- *  chars -- used as the human-readable label in capsule.md. Shared by `tag`
- *  and the `prune` handler's report-store write. */
-function deriveHeader(noteType: NoteType, fruit: PortalFruit | DeathReloadFruit, hasCut: boolean): string {
-  const raw = !hasCut
-    ? (fruit as PortalFruit).kept_context
-    : noteType === "portal"
-      ? (fruit as PortalFruit).summary
-      : (fruit as DeathReloadFruit).tried;
-  const firstLine = raw.split(/\r?\n/)[0].trim();
+/** `fruit.conclusion`, trimmed and collapsed to a single line, truncated to
+ *  ~80 chars as a defensive cap (not the primary truncation mechanism -- the
+ *  agent is expected to already write a short label) -- used as the
+ *  human-readable label in capsule.md. */
+function deriveHeader(fruit: PortalFruit | DeathReloadFruit): string {
+  const firstLine = fruit.conclusion.split(/\r?\n/)[0].trim();
   return firstLine.length > 80 ? firstLine.slice(0, 80) : firstLine;
 }
 
@@ -221,10 +216,24 @@ export function createToolHandlers(context: McpServerContext) {
         filtered = transcript.filter((l) => l.type === "user" || l.type === "assistant");
         cutIdx = filtered.findIndex((l) => l.uuid === boundary.messageId);
 
-        // Position of the same boundary message within the raw (unfiltered)
-        // transcript -- NOT cutIdx, which indexes into `filtered`.
-        const rawBoundaryIdx = transcript.findIndex((l) => l.uuid === boundary.messageId);
-        if (rawBoundaryIdx >= 0) rawEndLine = rawBoundaryIdx + 1;
+        // Archival position of the same quote, resolved independently
+        // against the durable shadow transcript (mekiri-proxy's own
+        // append-only copy) rather than the position within `transcript`
+        // above -- that position lives in Claude Code's own mutable .jsonl
+        // numbering, which is not safe to record long-term (see
+        // shadowTranscript.ts). If the shadow transcript hasn't caught up
+        // yet (or the quote genuinely isn't in it), rawEndLine stays
+        // undefined and recordDistillate skips raw-range recording for this
+        // entry, rather than storing a bogus range.
+        const shadowResult = await resolveBoundaryWithRetry(
+          () => readShadowTranscript(context.sessionId),
+          args.quote,
+        );
+        const shadowBoundary = shadowResult.boundary;
+        if (shadowBoundary.status === "ok") {
+          const idx = shadowResult.transcript.findIndex((l) => l.uuid === shadowBoundary.messageId);
+          if (idx >= 0) rawEndLine = idx + 1;
+        }
 
         rule = {
           id,
@@ -232,8 +241,8 @@ export function createToolHandlers(context: McpServerContext) {
           ...(stopBoundary ? { preserveFromQuote: stopBoundary.lastAssistantMessage } : {}),
         };
       } else {
-        const transcript = await readSessionTranscriptOrNull(context.dir, context.sessionId);
-        if (transcript !== null) rawEndLine = transcript.length;
+        const shadowTranscript = await readShadowTranscriptOrNull(context.sessionId);
+        if (shadowTranscript !== null) rawEndLine = shadowTranscript.length;
       }
 
       const keptContext = (validation.fruit as PortalFruit | DeathReloadFruit).kept_context;
@@ -241,7 +250,7 @@ export function createToolHandlers(context: McpServerContext) {
       const sections: string[] = [];
       if (keptContext.trim() !== "") {
         parts.push("kept");
-        sections.push("Важное (осталось в контексте): " + keptContext);
+        sections.push("Kept in context: " + keptContext);
       }
       if (hasCut) {
         parts.push("cut");
@@ -249,10 +258,19 @@ export function createToolHandlers(context: McpServerContext) {
       }
       const distillateText = sections.join("\n\n");
 
-      const header = deriveHeader(args.note_type, validation.fruit, hasCut);
+      const header = deriveHeader(validation.fruit);
       await recordDistillate(
         context.dir,
-        { event: "prune", sessionId: context.sessionId, ruleId: id, noteType: args.note_type, timestamp, parts, rawEndLine },
+        {
+          event: "prune",
+          sessionId: context.sessionId,
+          ruleId: id,
+          noteType: args.note_type,
+          timestamp,
+          parts,
+          rawEndLine,
+          rawSource: rawEndLine !== undefined ? "shadow" : undefined,
+        },
         header,
         distillateText,
       );
@@ -317,14 +335,17 @@ export function createToolHandlers(context: McpServerContext) {
       const entry = await findCapsuleEntry(context.dir, args.target);
       if (!entry) return { status: "not_found" };
 
-      // Entries written before raw-range recording existed have no
-      // rawStartLine/rawEndLine to look up -- graceful, explicit status,
-      // never a silent fall-back to the distillate.
-      if (entry.rawStartLine === undefined || entry.rawEndLine === undefined) {
+      // Entries written before raw-range recording existed, or before the
+      // durable shadow transcript existed (rawSource !== "shadow"), have no
+      // reliable rawStartLine/rawEndLine to look up -- a legacy entry's
+      // numbers point into Claude Code's own (possibly since-shrunk) .jsonl
+      // file, not the shadow transcript. Graceful, explicit status, never a
+      // silent fall-back to the distillate or a near-empty slice.
+      if (entry.rawStartLine === undefined || entry.rawEndLine === undefined || entry.rawSource !== "shadow") {
         return { status: "no_raw_range" };
       }
 
-      const transcript = await readSessionTranscriptOrNull(context.dir, entry.sessionId);
+      const transcript = await readShadowTranscriptOrNull(entry.sessionId);
       if (transcript === null) return { status: "transcript_unavailable" };
 
       // The recorded range can outrun what's actually on disk (e.g. a

@@ -23,6 +23,10 @@ Every `fruit` object carries a `kept_context` field, required but allowed to be 
 
 The only hard rule: `quote` and `kept_context` cannot both be empty in the same call — that combination cuts nothing and archives nothing, so validation rejects it outright.
 
+### `fruit.conclusion` — always required, drives the `capsule.md` label
+
+Every `fruit` object also carries a `conclusion`: a short (~8-12 word) label for this entry's line in `capsule.md`, required non-empty on every call regardless of `note_type` or whether `quote` is empty. It must be phrased as the outcome or finding of the episode, not the action taken — "SQLite rejected: sequential-read pattern favors flat files" tells a future agent scanning the table of contents what's actually in the entry; "Investigated storage options for the archive" does not. The field name itself is chosen to pull toward that phrasing — a "title" invites a topic label ("Storage options discussion"); a "conclusion" only makes sense as a finished thought. Write it *last*, after the rest of `fruit` is composed — by then the entry's actual content is known, and the conclusion can name it instead of guessing at it up front. `capsule.md` used to label entries with a truncated first line of `summary`/`kept_context`/`tried`, which routinely cut off mid-sentence before the actual content; `conclusion` replaces that with a label the agent chose on purpose.
+
 ### `note_type: portal` — the episode closed successfully
 
 The branch voluntarily collapses into a fact. Fields, all required as keys but individually allowed to be empty when `quote` is empty (there is no cut side to describe):
@@ -31,6 +35,7 @@ The branch voluntarily collapses into a fact. Fields, all required as keys but i
 - `files_touched` — list of changed files plus the gist of the edits. Required when `keep_code: true` (which, in turn, only applies when `quote` is non-empty): after the rollback, the agent does not see diffs and must know that its knowledge of these files is stale — on the next access, the file gets re-read rather than edited from memory of the old version.
 - `gotchas` — pitfalls run into along the way.
 - `kept_context` — see above.
+- `conclusion` — see above.
 
 ### `note_type: death_reload` — the hypothesis did not pan out
 
@@ -41,6 +46,7 @@ Only makes sense when something is actually being cut, so `death_reload` require
 - `facts_learned` — facts established along the way.
 - `trigger` — `self_detected | user_feedback`. In practice, `death_reload` is triggered more often by direct negative user feedback ("you got it wrong, you broke X") than by internal reflection — that kind of `ruled_out` carries information the agent could not have derived on its own, and its value for perturbing convergence is higher.
 - `kept_context` — see above.
+- `conclusion` — see above.
 
 ### Nested rollbacks
 
@@ -72,10 +78,10 @@ graft(
 )
 ```
 
-Works as a read from a flat on-disk archive, not from the live session — it survives compaction and session end by construction, not by luck.
+Works as a read from a flat on-disk archive, not from the live session — it survives compaction and session end by construction, not by luck. Concretely: the raw fragment `graft` returns is sourced from `mekiri-proxy`'s own durable, append-only shadow transcript — a wire-level copy of the conversation the daemon keeps for itself, independent of Claude Code's own session file (the one compaction is free to truncate or rewrite). The guarantee this buys is project-wide and time-unlimited: an entry from early in a very long session that has since been compacted many times over, or one written a month ago in a session that has long since ended, run by a different agent entirely, is recoverable through the exact same single call as an entry from five minutes ago in the current session — as long as it was written after Mekiri was wired into the project. Entries recorded before this shadow archive existed are the one honest exception: their numbering points into Claude Code's own (non-monotonic) file rather than the shadow transcript, so `graft` returns an explicit `no_raw_range` for those instead of a silent, misleadingly short answer.
 
 - **Without `target`** — the table of contents (`capsule.md`) of only the current session: a list of `prune` entries with their `rule_id`, tagged `[kept]`, `[cut]`, or `[kept+cut]` depending on which sides that call touched, cheap regardless of the project age.
-- **With `target = rule_id`** — searches the project-wide index (`.mekiri/capsule-index.jsonl`), which covers every session ever run in this project; finds the session, and returns the **raw transcript fragment** that call originally covered (verbatim, not the distillate) wrapped in recovery metadata (`event`, `session`, `timestamp`). Large fragments (raw ranges routinely run into the tens of thousands of characters) are hard-truncated with the real length reported alongside; entries written before raw-range recording existed, or whose session transcript file is no longer on disk, come back with an explicit status (`no_raw_range` / `transcript_unavailable`) rather than silently substituting the distillate or crashing.
+- **With `target = rule_id`** — searches the project-wide index (`.mekiri/capsule-index.jsonl`), which covers every session ever run in this project; finds the session, and returns the **raw transcript fragment** that call originally covered (verbatim, not the distillate) wrapped in recovery metadata (`event`, `session`, `timestamp`). Large fragments (raw ranges routinely run into the tens of thousands of characters) are hard-truncated with the real length reported alongside; legacy pre-shadow-archive entries come back `no_raw_range`, and the rare case of a shadow file itself missing from disk comes back `transcript_unavailable` — either way, an explicit status rather than silently substituting the distillate or crashing.
 
 Practical application: if, after a rollback, a past reply the agent expected to find is not in the context — that is almost always `prune` working as intended, not a glitch. Verify it via `graft`, not by rewriting from scratch: before claiming "that did not happen," first `graft(rule_id)` and read the actual original wording it returns, and only then draw a conclusion. This is deliberately not the distillate: a distillate is the agent's own summary of what happened and cannot self-certify that summary's accuracy — `graft` exists specifically to check a distillate (or a suspicion that one is wrong) against the real transcript underneath it.
 

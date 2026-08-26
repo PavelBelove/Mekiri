@@ -5,7 +5,7 @@ describe("validateFruit", () => {
   it("accepts a portal fruit without files_touched when keep_code is false", () => {
     const result = validateFruit({
       noteType: "portal",
-      fruit: { summary: "read logs, found the cause", kept_context: "" },
+      fruit: { summary: "read logs, found the cause", kept_context: "", conclusion: "found the root cause in the logs" },
       keepCode: false,
       quote: "some quote",
     });
@@ -15,7 +15,7 @@ describe("validateFruit", () => {
   it("rejects a portal fruit missing files_touched when keep_code is true", () => {
     const result = validateFruit({
       noteType: "portal",
-      fruit: { summary: "read logs, found the cause", kept_context: "" },
+      fruit: { summary: "read logs, found the cause", kept_context: "", conclusion: "found the root cause in the logs" },
       keepCode: true,
       quote: "some quote",
     });
@@ -32,6 +32,7 @@ describe("validateFruit", () => {
         summary: "read logs, found the cause",
         files_touched: [{ path: "src/foo.ts", change: "fixed off-by-one" }],
         kept_context: "",
+        conclusion: "found the root cause in the logs",
       },
       keepCode: true,
       quote: "some quote",
@@ -62,10 +63,33 @@ describe("validateFruit", () => {
     }
   });
 
+  it("rejects a portal fruit missing conclusion", () => {
+    const result = validateFruit({
+      noteType: "portal",
+      fruit: { summary: "read logs, found the cause", kept_context: "" },
+      keepCode: false,
+      quote: "some quote",
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a portal fruit with an empty conclusion", () => {
+    const result = validateFruit({
+      noteType: "portal",
+      fruit: { summary: "read logs, found the cause", kept_context: "", conclusion: "" },
+      keepCode: false,
+      quote: "some quote",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join(" ")).toMatch(/conclusion/);
+    }
+  });
+
   it("accepts a death_reload fruit with tried and ruled_out", () => {
     const result = validateFruit({
       noteType: "death_reload",
-      fruit: { tried: "assumed serialization bug", ruled_out: "it is not serialization", kept_context: "" },
+      fruit: { tried: "assumed serialization bug", ruled_out: "it is not serialization", kept_context: "", conclusion: "serialization ruled out as the cause" },
       keepCode: true,
       quote: "some quote",
     });
@@ -75,7 +99,7 @@ describe("validateFruit", () => {
   it("rejects a death_reload fruit missing ruled_out", () => {
     const result = validateFruit({
       noteType: "death_reload",
-      fruit: { tried: "assumed serialization bug", kept_context: "" },
+      fruit: { tried: "assumed serialization bug", kept_context: "", conclusion: "serialization ruled out as the cause" },
       keepCode: true,
       quote: "some quote",
     });
@@ -85,7 +109,7 @@ describe("validateFruit", () => {
   it("rejects death_reload when quote is empty (a dead end always cuts something)", () => {
     const result = validateFruit({
       noteType: "death_reload",
-      fruit: { tried: "x", ruled_out: "y", kept_context: "" },
+      fruit: { tried: "x", ruled_out: "y", kept_context: "", conclusion: "x ruled out" },
       keepCode: true,
       quote: "",
     });
@@ -95,10 +119,23 @@ describe("validateFruit", () => {
     }
   });
 
+  it("rejects a death_reload fruit with an empty conclusion", () => {
+    const result = validateFruit({
+      noteType: "death_reload",
+      fruit: { tried: "x", ruled_out: "y", kept_context: "", conclusion: "" },
+      keepCode: true,
+      quote: "some quote",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join(" ")).toMatch(/conclusion/);
+    }
+  });
+
   it("accepts a pure archive call: quote empty, kept_context non-empty, cut side left blank", () => {
     const result = validateFruit({
       noteType: "portal",
-      fruit: { summary: "", kept_context: "an invariant worth remembering" },
+      fruit: { summary: "", kept_context: "an invariant worth remembering", conclusion: "invariant worth remembering" },
       keepCode: false,
       quote: "",
     });
@@ -108,7 +145,7 @@ describe("validateFruit", () => {
   it("rejects when both quote and kept_context are empty (nothing to cut, nothing to keep)", () => {
     const result = validateFruit({
       noteType: "portal",
-      fruit: { summary: "", kept_context: "" },
+      fruit: { summary: "", kept_context: "", conclusion: "nothing to record" },
       keepCode: false,
       quote: "",
     });
@@ -121,7 +158,7 @@ describe("validateFruit", () => {
   it("rejects a cut portal call with an empty summary", () => {
     const result = validateFruit({
       noteType: "portal",
-      fruit: { summary: "", kept_context: "" },
+      fruit: { summary: "", kept_context: "", conclusion: "nothing to record" },
       keepCode: false,
       quote: "some quote",
     });

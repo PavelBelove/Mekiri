@@ -200,6 +200,32 @@ describe("reportStore", () => {
       expect(entry?.rawStartLine).toBeUndefined();
       expect(entry?.rawEndLine).toBeUndefined();
     });
+
+    it("chains a shadow-sourced entry off a prior shadow-sourced entry in the same session", async () => {
+      await recordDistillate(dir, meta({ ruleId: "rule-1", rawEndLine: 12, rawSource: "shadow" }), "h1", "body one");
+      await recordDistillate(dir, meta({ ruleId: "rule-2", rawEndLine: 30, rawSource: "shadow" }), "h2", "body two");
+
+      const second = await findCapsuleEntry(dir, "rule-2");
+      expect(second?.rawStartLine).toBe(13);
+      expect(second?.rawEndLine).toBe(30);
+      expect(second?.rawSource).toBe("shadow");
+    });
+
+    it("does not chain a shadow-sourced entry onto a prior entry recorded without rawSource: 'shadow' -- the numbering schemes are incompatible", async () => {
+      // Simulates the exact migration scenario the rawSource marker exists
+      // for: a session that has an old, pre-fix entry (rawEndLine counted
+      // against Claude Code's own mutable .jsonl) followed by the first
+      // post-fix entry (rawEndLine counted against the durable shadow
+      // transcript). Chaining onto the legacy entry would silently
+      // reproduce the original inverted-range bug.
+      await recordDistillate(dir, meta({ ruleId: "rule-legacy", rawEndLine: 1747 }), "h1", "legacy body");
+      await recordDistillate(dir, meta({ ruleId: "rule-shadow", rawEndLine: 30, rawSource: "shadow" }), "h2", "shadow body");
+
+      const shadowEntry = await findCapsuleEntry(dir, "rule-shadow");
+      expect(shadowEntry?.rawStartLine).toBe(1);
+      expect(shadowEntry?.rawEndLine).toBe(30);
+      expect(shadowEntry?.rawSource).toBe("shadow");
+    });
   });
 
   describe("slugify", () => {

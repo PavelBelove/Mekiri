@@ -1,10 +1,19 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import http from "node:http";
 import net from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createDaemon } from "../src/daemon.js";
+
+// Wraps the real implementation so most tests archive for real (needed to
+// assert the shadow transcript actually got the full, uncut history), while
+// one test below overrides appendNewShadowMessages to reject, to prove a
+// failed archival never breaks the proxied request.
+vi.mock("../src/shadowTranscript.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/shadowTranscript.js")>("../src/shadowTranscript.js");
+  return { ...actual, appendNewShadowMessages: vi.fn(actual.appendNewShadowMessages) };
+});
 
 function jsonRequest(port: number, options: http.RequestOptions, body?: unknown): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
@@ -192,6 +201,71 @@ describe("daemon", () => {
       requestBody.messages[9],
       requestBody.messages[10],
     ]);
+  });
+
+  it("archives the full uncut wire history to the shadow transcript before applying rule-based cuts", async () => {
+    const sessionId = "shadow-archive-session";
+    await jsonRequest(
+      DAEMON_PORT,
+      { path: "/control/rule", method: "POST", headers: { "content-type": "application/json" } },
+      { sessionId, dir: "/some/project", rule: { id: "rule-shadow-1", matchQuote: "old reply text" } }
+    );
+
+    const requestBody = {
+      messages: [
+        { role: "user", content: "old turn" },
+        { role: "assistant", content: [{ type: "text", text: "old reply text" }] },
+        { role: "user", content: "middle turn" },
+        {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "toolu_shadow", name: "prune", input: { quote: "old reply text" } }],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "toolu_shadow",
+              content: [{ type: "text", text: JSON.stringify({ status: "ok", rule_id: "rule-shadow-1" }) }],
+            },
+          ],
+        },
+        { role: "user", content: "new turn" },
+      ],
+      metadata: { user_id: JSON.stringify({ session_id: sessionId }) },
+    };
+    await jsonRequest(
+      DAEMON_PORT,
+      { path: "/v1/messages", method: "POST", headers: { "content-type": "application/json" } },
+      requestBody
+    );
+
+    // Upstream saw the rule applied (cut) ...
+    expect(lastUpstreamBody.messages).toHaveLength(4);
+    // ... but the shadow transcript archived the full, uncut history, since
+    // appendNewShadowMessages runs before rewriteMessages mutates parsed.messages.
+    const { readShadowTranscript } = await import("../src/shadowTranscript.js");
+    const archived = await readShadowTranscript(sessionId);
+    expect(archived).toHaveLength(requestBody.messages.length);
+    expect(archived.map((l) => l.message?.content)).toEqual(requestBody.messages.map((m) => m.content));
+  });
+
+  it("does not fail the proxied request when shadow archival throws", async () => {
+    const { appendNewShadowMessages } = await import("../src/shadowTranscript.js");
+    vi.mocked(appendNewShadowMessages).mockRejectedValueOnce(new Error("disk full"));
+
+    const requestBody = {
+      messages: [{ role: "user", content: "hi despite archival failure" }],
+      metadata: { user_id: JSON.stringify({ session_id: "archival-failure-session" }) },
+    };
+    const { status, body } = await jsonRequest(
+      DAEMON_PORT,
+      { path: "/v1/messages", method: "POST", headers: { "content-type": "application/json" } },
+      requestBody
+    );
+    expect(status).toBe(200);
+    expect(body).toEqual({ echoed: true });
+    expect(lastUpstreamBody.messages).toEqual(requestBody.messages);
   });
 
   it("survives a client aborting mid-request instead of crashing the daemon", async () => {

@@ -11,6 +11,7 @@ const PortalFruitSchema = z.object({
   files_touched: z.array(FileTouchedSchema).optional(),
   gotchas: z.string().optional(),
   kept_context: z.string(),
+  conclusion: z.string(),
 });
 
 const DeathReloadFruitSchema = z.object({
@@ -19,6 +20,7 @@ const DeathReloadFruitSchema = z.object({
   facts_learned: z.string().optional(),
   trigger: z.enum(["self_detected", "user_feedback"]).optional(),
   kept_context: z.string(),
+  conclusion: z.string(),
 });
 
 export interface ValidateFruitArgs {
@@ -57,6 +59,9 @@ export function validateFruit(args: ValidateFruitArgs): ValidateFruitResult {
     if (!parsed.success) {
       return { ok: false, errors: formatIssues(parsed.error) };
     }
+    if (parsed.data.conclusion.trim() === "") {
+      return { ok: false, errors: ["conclusion: is required (non-empty)"] };
+    }
     if (hasCut) {
       if (parsed.data.summary.trim() === "") {
         return { ok: false, errors: ["summary: is required (non-empty) when quote is non-empty"] };
@@ -79,6 +84,9 @@ export function validateFruit(args: ValidateFruitArgs): ValidateFruitResult {
   const parsed = DeathReloadFruitSchema.safeParse(args.fruit);
   if (!parsed.success) {
     return { ok: false, errors: formatIssues(parsed.error) };
+  }
+  if (parsed.data.conclusion.trim() === "") {
+    return { ok: false, errors: ["conclusion: is required (non-empty)"] };
   }
   if (parsed.data.tried.trim() === "" || parsed.data.ruled_out.trim() === "") {
     return { ok: false, errors: ["tried and ruled_out are required (non-empty) for death_reload"] };

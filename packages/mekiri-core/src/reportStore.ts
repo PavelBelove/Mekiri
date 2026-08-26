@@ -140,6 +140,10 @@ export interface ReportEntryMeta {
    *  transcript (e.g. file missing); recordDistillate then skips raw-range
    *  recording for this entry entirely, rather than storing a bogus range. */
   rawEndLine?: number;
+  /** See CapsuleIndexEntry.rawSource -- pass "shadow" whenever rawEndLine
+   *  was sourced from the durable shadow transcript, so the chaining logic
+   *  below never mixes it with a legacy, unreliable-numbering entry. */
+  rawSource?: "shadow";
 }
 
 // Serializes concurrent recordDistillate calls behind an in-module
@@ -230,9 +234,14 @@ export async function recordDistillate(
     let rawEndLine: number | undefined;
     if (meta.rawEndLine !== undefined) {
       const existingIndexRaw = await readFileIfExists(indexPath);
+      // Only chain off prior entries recorded under the same numbering
+      // scheme (rawSource === "shadow") -- a legacy entry's rawEndLine
+      // points into Claude Code's own (unreliable) .jsonl line count, which
+      // has no relationship to the shadow transcript's own message count.
+      // Chaining onto it would silently reproduce the original bug.
       const priorRawEnds = splitLines(existingIndexRaw)
         .map((line) => JSON.parse(line) as CapsuleIndexEntry)
-        .filter((e) => e.sessionId === meta.sessionId && e.rawEndLine !== undefined)
+        .filter((e) => e.sessionId === meta.sessionId && e.rawEndLine !== undefined && e.rawSource === meta.rawSource)
         .map((e) => e.rawEndLine as number);
       rawStartLine = priorRawEnds.length > 0 ? Math.max(...priorRawEnds) + 1 : 1;
       rawEndLine = meta.rawEndLine;
@@ -247,7 +256,7 @@ export async function recordDistillate(
       parts: meta.parts,
       sessionId: meta.sessionId,
       timestamp: meta.timestamp,
-      ...(rawStartLine !== undefined ? { rawStartLine, rawEndLine } : {}),
+      ...(rawStartLine !== undefined ? { rawStartLine, rawEndLine, rawSource: meta.rawSource } : {}),
     };
     await fs.appendFile(indexPath, `${JSON.stringify(indexEntry)}\n`, "utf8");
 

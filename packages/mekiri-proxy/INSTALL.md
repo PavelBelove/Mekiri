@@ -6,6 +6,8 @@ This guide is aimed at an agent that has been given a link to this repository an
 
 > **Any change below — `.mcp.json` (§2), `ANTHROPIC_BASE_URL` (§3), `.claude/settings.json` (§4), or `.claude/skills/` (§5) — requires a full Claude Code session restart to take effect, not just the env var.** All of them are read once at process startup. If you edit one mid-session and see no error, that's not confirmation it worked — it means you're still running on the old wiring. Self-check: if a skill you just copied in doesn't show up in your available-skills list, you haven't restarted yet.
 
+> **Security: add `.mekiri/` to the target project's own `.gitignore`.** The first `prune`/`sprout` call in the target project creates a `.mekiri/` directory in *that project's own root* (see §7) and starts writing session distillates into it — and a distillate can contain whatever the user or the agent put into the conversation, secrets and personal data included. If the target project's `.gitignore` doesn't already exclude `.mekiri/`, that content gets committed, and once pushed, sits in the project's git history for good. Add the exclusion during §2, before the directory has a chance to exist — the same single line this repo's own [`.gitignore`](../../.gitignore) uses.
+
 ## 0. Check the Node version
 
 `nudge-hook.ts` runs via `node --experimental-strip-types` — this flag needs **Node ≥ 22.6**.
@@ -50,6 +52,14 @@ In the root of the **target project**, create or extend `.mcp.json`:
 ```
 
 The path must be **absolute** — unlike the Mekiri repository itself (where `.mcp.json` uses a relative path for the self-hosting scenario), the target project doesn't live inside Mekiri, and a relative path won't work here.
+
+While you're editing the target project's own files, also add `.mekiri/` to its `.gitignore` (create the file if it doesn't exist yet):
+
+```
+.mekiri/
+```
+
+Do this now, not after the fact — see the security note above.
 
 ## 3. `ANTHROPIC_BASE_URL`
 

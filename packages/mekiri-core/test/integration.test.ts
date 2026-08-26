@@ -69,6 +69,7 @@ describe("mekiri-core end-to-end: read dirty logs, then prune(portal)", () => {
         summary: "CI flake is a retry/cleanup race; fixed by locking the cleanup handler.",
         files_touched: [{ path: "ci/retry.ts", change: "added lock around cleanup" }],
         kept_context: "",
+        conclusion: "CI flake fixed: retry/cleanup race resolved with a lock",
       },
       keepCode: true,
       quote,

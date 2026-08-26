@@ -19,6 +19,8 @@ There are two distinct setups. Pick one before you start:
 
 ## A. Wiring Mekiri into a project (the default case)
 
+> **Security note before you start:** the first `prune`/`sprout` call you make in this project creates a `.mekiri/` directory in *this project's own root* (see step 9) and starts writing session distillates into it — which can contain whatever the user or the agent put into the conversation, secrets and personal data included. Add `.mekiri/` to this project's own `.gitignore` as part of step 3 below (create the file if it doesn't exist), before that directory has a chance to exist uncommitted-but-untracked. If you discover during this setup that it's already missing and something's already been committed, flag that to the human explicitly rather than silently rewriting history yourself.
+
 1. **Check Node.** `node --version` must be ≥ 22.6 (the hook uses
    `--experimental-strip-types`). If lower, upgrade before continuing — an older Node makes
    the reminder hook silently non-functional, not loudly broken.
@@ -55,6 +57,9 @@ There are two distinct setups. Pick one before you start:
    ```
    `<MEKIRI_DIR>` must be an **absolute** path — this project doesn't live inside Mekiri, so a
    relative path won't resolve.
+
+   While you're here, add `.mekiri/` to this project's own `.gitignore` (create the file if it
+   doesn't exist yet) — see the security note at the top of this section.
 
 4. **Create/extend `.claude/settings.json`**:
    ```json

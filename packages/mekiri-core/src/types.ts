@@ -14,6 +14,11 @@ export interface PortalFruit {
    *  future sessions -- the former `tag` payload, now riding along on every
    *  `prune` call. Always present, "" when nothing is worth flagging. */
   kept_context: string;
+  /** Short (~8-12 word) outcome-phrased label for this entry's capsule.md
+   *  line -- not an action description, not the first line of `summary`
+   *  truncated. Always required, regardless of whether this call cuts
+   *  anything. Write it last, once the entry's actual content is known. */
+  conclusion: string;
 }
 
 export interface DeathReloadFruit {
@@ -23,6 +28,8 @@ export interface DeathReloadFruit {
   trigger?: "self_detected" | "user_feedback";
   /** See PortalFruit.kept_context. */
   kept_context: string;
+  /** See PortalFruit.conclusion. */
+  conclusion: string;
 }
 
 export type Fruit = PortalFruit | DeathReloadFruit;
@@ -75,4 +82,11 @@ export interface CapsuleIndexEntry {
    *  gracefully, never crash, on old capsule-index.jsonl data. */
   rawStartLine?: number;
   rawEndLine?: number;
+  /** "shadow" once rawEndLine is sourced from mekiri-proxy's own durable,
+   *  append-only shadow transcript rather than Claude Code's mutable
+   *  .jsonl file. Absent on entries written before this existed -- their
+   *  rawStartLine/rawEndLine point into a numbering scheme that no longer
+   *  corresponds to anything readable, and must not be chained onto or
+   *  looked up against the shadow transcript. */
+  rawSource?: "shadow";
 }
