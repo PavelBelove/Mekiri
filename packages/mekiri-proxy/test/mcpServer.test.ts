@@ -282,6 +282,112 @@ describe("prune handler: cutting calls (quote non-empty)", () => {
   });
 });
 
+function shadowLineWithoutQuote(uuid: string): { type: string; uuid: string; message: { role: string; content: { type: string; text: string }[] } } {
+  return { type: "assistant", uuid, message: { role: "assistant", content: [{ type: "text", text: "unrelated shadow content" }] } };
+}
+
+describe("prune handler: shadow-transcript rawEndLine fallback and coverage_hint", () => {
+  // resolveBoundaryWithRetry re-invokes readTranscript on every retry when the
+  // boundary keeps coming back not_found, so mockResolvedValueOnce (which
+  // only overrides the first call) isn't enough here -- it would fall through
+  // to the shared default mock (FIXTURE_TRANSCRIPT, which *does* contain the
+  // quote) on the retry and mask exactly the fallback behavior under test.
+  // mockResolvedValue persists across the whole mocked module though, so each
+  // such test restores the shared default afterward to avoid leaking into
+  // later describe blocks (graft handler, sprout handler) that assume it.
+  it("falls back rawEndLine to the shadow transcript's length when the quote can't be found in it, instead of leaving it undefined", async () => {
+    const { readShadowTranscript } = await import("../src/shadowTranscript.js");
+    vi.mocked(readShadowTranscript).mockResolvedValue(
+      Array.from({ length: 5 }, (_, i) => shadowLineWithoutQuote("shadow-" + i)) as never,
+    );
+    try {
+      const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+      const result = await handlers.prune({
+        quote: "the answer is 42",
+        note_type: "portal",
+        fruit: { summary: "x", kept_context: "", conclusion: "x" },
+        keep_code: false,
+      });
+
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") throw new Error("unreachable");
+
+      const { findCapsuleEntry } = await import("mekiri-core");
+      const entry = await findCapsuleEntry(projectDir, result.rule_id);
+      expect(entry?.rawEndLine).toBe(5);
+      expect(entry?.rawSource).toBe("shadow");
+    } finally {
+      vi.mocked(readShadowTranscript).mockResolvedValue(FIXTURE_TRANSCRIPT as never);
+    }
+  });
+
+  it("returns coverage_hint when a large raw span pairs with near-empty combined prose", async () => {
+    const { readShadowTranscript } = await import("../src/shadowTranscript.js");
+    vi.mocked(readShadowTranscript).mockResolvedValue(
+      Array.from({ length: 25 }, (_, i) => shadowLineWithoutQuote("shadow-" + i)) as never,
+    );
+    try {
+      const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+      const result = await handlers.prune({
+        quote: "the answer is 42",
+        note_type: "portal",
+        fruit: { summary: "a", kept_context: "", conclusion: "a" },
+        keep_code: false,
+      });
+
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") throw new Error("unreachable");
+      expect(result.coverage_hint).toEqual(expect.stringContaining("25"));
+    } finally {
+      vi.mocked(readShadowTranscript).mockResolvedValue(FIXTURE_TRANSCRIPT as never);
+    }
+  });
+
+  it("does not return coverage_hint when the raw span is small, even with near-empty prose", async () => {
+    const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+    const result = await handlers.prune({
+      quote: "the answer is 42",
+      note_type: "portal",
+      fruit: { summary: "a", kept_context: "", conclusion: "a" },
+      keep_code: false,
+    });
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+    expect(result.coverage_hint).toBeUndefined();
+  });
+
+  it("does not return coverage_hint when the raw span is large but the prose is substantial", async () => {
+    const { readShadowTranscript } = await import("../src/shadowTranscript.js");
+    vi.mocked(readShadowTranscript).mockResolvedValue(
+      Array.from({ length: 25 }, (_, i) => shadowLineWithoutQuote("shadow-" + i)) as never,
+    );
+    try {
+      const handlers = createToolHandlers({ sessionId: "s1", dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+      const result = await handlers.prune({
+        quote: "the answer is 42",
+        note_type: "portal",
+        fruit: {
+          summary: "a much longer summary describing exactly what happened in this episode",
+          kept_context: "",
+          conclusion: "a reasonably descriptive conclusion line",
+        },
+        keep_code: false,
+      });
+
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") throw new Error("unreachable");
+      expect(result.coverage_hint).toBeUndefined();
+    } finally {
+      vi.mocked(readShadowTranscript).mockResolvedValue(FIXTURE_TRANSCRIPT as never);
+    }
+  });
+});
+
 describe("prune handler: stopBoundary (Stop-hook-forced prune)", () => {
   it("threads preserveFromQuote into the rule when bin/stop-hook.ts left a stopBoundary flag", async () => {
     await saveHookState(projectDir, "s1", {

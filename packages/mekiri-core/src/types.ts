@@ -89,4 +89,11 @@ export interface CapsuleIndexEntry {
    *  corresponds to anything readable, and must not be chained onto or
    *  looked up against the shadow transcript. */
   rawSource?: "shadow";
+  /** Mechanical tool_use tally for this entry's range (see
+   *  summarizeToolActivity in verifyFruitEvidence.ts) -- computed straight
+   *  from the transcript, independent of what the agent wrote in
+   *  kept_context/summary. A factual backstop for thin or incomplete prose;
+   *  "" when the range had no tool_use blocks, absent on entries written
+   *  before this field existed. */
+  activityLog?: string;
 }

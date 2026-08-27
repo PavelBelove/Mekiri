@@ -1,11 +1,11 @@
 ---
 name: mekiri-gate
-description: "Use before choosing how to dispatch work inside a mekiri-host session -- prune vs sprout vs a clean Task subagent vs staying inline. Applies identically to the parent session and to any sprout clone."
+description: "Use before choosing how to dispatch work in a session where Mekiri's MCP tools are available -- prune vs sprout vs a clean Task subagent vs staying inline. Applies identically to the parent session and to any sprout clone."
 ---
 
 # mekiri-gate
 
-The gate for choosing a dispatch tool inside mekiri-host: `prune` / `sprout` / a clean subagent (Task) / inline work. Applies identically to the parent session and to any sprout clone.
+The gate for choosing a dispatch tool: `prune` / `sprout` / a clean subagent (Task) / inline work. Applies identically to the parent session and to any sprout clone.
 
 **Quick reflex**: got dirty — `prune`. About to get dirty on a subtask — `sprout`. Below is the full gate for cases where that's not obvious (in particular, Question 1 can rule out a fork entirely).
 

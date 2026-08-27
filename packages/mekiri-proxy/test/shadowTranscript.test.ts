@@ -57,20 +57,54 @@ describe("shadowTranscript", () => {
     expect(transcript.map((l) => l.message?.content)).toEqual(["first", "second"]);
   });
 
-  it("is a no-op when called again with the same or a shorter array", async () => {
+  it("is a no-op when called again with the exact same array", async () => {
     const { appendNewShadowMessages, readShadowTranscript } = await import("../src/shadowTranscript.js");
     await appendNewShadowMessages("noop-session", [
       { role: "user", content: "a" },
       { role: "assistant", content: "b" },
     ]);
-    // Simulates Claude Code's own file shrinking mid-compaction: the wire
-    // array handed to appendNewShadowMessages must never cause the shadow
-    // transcript to lose or rewrite what it already archived.
-    await appendNewShadowMessages("noop-session", [{ role: "user", content: "a" }]);
+    await appendNewShadowMessages("noop-session", [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b" },
+    ]);
 
     const transcript = await readShadowTranscript("noop-session");
     expect(transcript).toHaveLength(2);
     expect(transcript.map((l) => l.message?.content)).toEqual(["a", "b"]);
+  });
+
+  it("archives a shorter array instead of skipping it (native auto-compaction shrinks the wire array)", async () => {
+    const { appendNewShadowMessages, readShadowTranscript } = await import("../src/shadowTranscript.js");
+    await appendNewShadowMessages("compact-session", [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b" },
+      { role: "user", content: "c" },
+    ]);
+    // Compaction replaces older history with one synthetic summary message,
+    // so the next request's array is shorter than the last one seen.
+    await appendNewShadowMessages("compact-session", [{ role: "user", content: "compact-summary" }]);
+
+    const transcript = await readShadowTranscript("compact-session");
+    expect(transcript.map((l) => l.message?.content)).toEqual(["a", "b", "c", "compact-summary"]);
+  });
+
+  it("resumes normal incremental appends after a shrink, without re-duplicating on every subsequent call", async () => {
+    const { appendNewShadowMessages, readShadowTranscript } = await import("../src/shadowTranscript.js");
+    await appendNewShadowMessages("post-compact-session", [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b" },
+      { role: "user", content: "c" },
+    ]);
+    await appendNewShadowMessages("post-compact-session", [{ role: "user", content: "compact-summary" }]);
+    // Normal growth relative to the new, post-compaction baseline -- must
+    // append only the one new tail message, not re-append the whole array.
+    await appendNewShadowMessages("post-compact-session", [
+      { role: "user", content: "compact-summary" },
+      { role: "assistant", content: "new turn" },
+    ]);
+
+    const transcript = await readShadowTranscript("post-compact-session");
+    expect(transcript.map((l) => l.message?.content)).toEqual(["a", "b", "c", "compact-summary", "new turn"]);
   });
 
   it("keeps separate sessions in separate files", async () => {
@@ -87,6 +121,15 @@ describe("shadowTranscript", () => {
     const growingHistory = (n: number) =>
       Array.from({ length: n }, (_, i) => ({ role: i % 2 === 0 ? "user" : "assistant", content: `msg ${i}` }));
 
+    // These three calls are issued concurrently but, since none of them
+    // await before reaching the mutex, are enqueued in source order: 3, then
+    // 5, then 4. The last one (4) is shorter than the immediately preceding
+    // one (5) it's racing against -- indistinguishable, by length alone,
+    // from a real compaction shrink -- so it's archived in full rather than
+    // skipped. The mutex guarantees no interleaving/corruption and nothing
+    // from msg 0..msg 4 is ever lost; msg 0..msg 3 end up duplicated, which
+    // is the accepted trade-off for never silently dropping a real
+    // post-compaction batch (see appendNewShadowMessages's doc comment).
     await Promise.all([
       appendNewShadowMessages("concurrent-session", growingHistory(3)),
       appendNewShadowMessages("concurrent-session", growingHistory(5)),
@@ -94,8 +137,10 @@ describe("shadowTranscript", () => {
     ]);
 
     const transcript = await readShadowTranscript("concurrent-session");
-    expect(transcript).toHaveLength(5);
-    expect(transcript.map((l) => l.message?.content)).toEqual(["msg 0", "msg 1", "msg 2", "msg 3", "msg 4"]);
+    const contents = transcript.map((l) => l.message?.content);
+    expect(contents).toEqual(["msg 0", "msg 1", "msg 2", "msg 3", "msg 4", "msg 0", "msg 1", "msg 2", "msg 3"]);
+    // No real content lost, regardless of the duplication above.
+    expect(new Set(contents)).toEqual(new Set(["msg 0", "msg 1", "msg 2", "msg 3", "msg 4"]));
   });
 
   it("reseeds its in-memory archived count from disk on first use after a restart", async () => {

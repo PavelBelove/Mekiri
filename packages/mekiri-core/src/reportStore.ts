@@ -1,7 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { NoteType } from "./types.js";
+import type { NoteType, RawLine } from "./types.js";
 import type { CapsuleIndexEntry } from "./types.js";
+import { summarizeToolActivity } from "./verifyFruitEvidence.js";
 
 const CAPSULE_INDEX_RELATIVE_PATH = path.join(".mekiri", "capsule-index.jsonl");
 const SESSIONS_INDEX_RELATIVE_PATH = path.join(".mekiri", "sessions-index.md");
@@ -144,6 +145,14 @@ export interface ReportEntryMeta {
    *  was sourced from the durable shadow transcript, so the chaining logic
    *  below never mixes it with a legacy, unreliable-numbering entry. */
   rawSource?: "shadow";
+  /** The full shadow transcript for this session, as already read by the
+   *  caller while resolving rawEndLine -- passed through so recordDistillate
+   *  can slice out exactly the raw range it's about to chain
+   *  (rawStartLine..rawEndLine) and compute CapsuleIndexEntry.activityLog
+   *  from it mechanically, without re-reading the file itself or
+   *  duplicating the chaining math on the caller's side. Only meaningful
+   *  (and used) when rawEndLine is also defined. */
+  rawTranscript?: RawLine[];
 }
 
 // Serializes concurrent recordDistillate calls behind an in-module
@@ -191,47 +200,39 @@ async function readFileIfExists(filePath: string): Promise<string> {
   }
 }
 
+export interface RecordDistillateResult {
+  startLine: number;
+  endLine: number;
+  /** Raw transcript line count actually covered by this entry's "kept" span
+   *  (rawStartLine..rawEndLine) -- undefined under the same conditions
+   *  CapsuleIndexEntry.rawStartLine/rawEndLine are undefined. Callers use
+   *  this to judge whether kept_context/summary prose is suspiciously thin
+   *  relative to how much raw transcript this entry actually covers. */
+  rawSpanLength?: number;
+}
+
 export async function recordDistillate(
   dir: string,
   meta: ReportEntryMeta,
   header: string,
   bodyText: string,
-): Promise<{ startLine: number; endLine: number }> {
+): Promise<RecordDistillateResult> {
   // Keyed by project `dir` alone (not `dir`+sessionId): capsule-index.jsonl
   // stays a single project-wide file even though report.md/capsule.md are
   // now per-session, so cross-session writers (concurrent sprout calls)
   // must still serialize against each other on that shared file.
   return withDirMutex(dir, async () => {
-    const reportPath = sessionReportPath(dir, meta.sessionId);
-    await fs.mkdir(path.dirname(reportPath), { recursive: true });
-
-    const existingRaw = await readFileIfExists(reportPath);
-    const startLine = splitLines(existingRaw).length + 1;
-
-    const metaLine = `# ${meta.event} ${meta.ruleId} session=${meta.sessionId} noteType=${meta.noteType} ${meta.timestamp}`;
-    const block = `${metaLine}\n${bodyText}\n`;
-    await fs.appendFile(reportPath, block, "utf8");
-
-    const blockLineCount = splitLines(block).length;
-    const endLine = startLine + blockLineCount - 1;
-
-    const capsulePath = sessionCapsulePath(dir, meta.sessionId);
-    await fs.mkdir(path.dirname(capsulePath), { recursive: true });
-    const partsLabel = meta.parts.length === 2 ? "kept+cut" : meta.parts[0];
-    const capsuleLine =
-      "«" + header + "» " + startLine + "-" + endLine + " — [" + partsLabel + "] " + meta.ruleId + "\n";
-    await fs.appendFile(capsulePath, capsuleLine, "utf8");
-
     const indexPath = path.join(dir, CAPSULE_INDEX_RELATIVE_PATH);
     await fs.mkdir(path.dirname(indexPath), { recursive: true });
 
     // Chain this session's raw-transcript range off its own previous entry
     // (rawStartLine = previous rawEndLine + 1), mirroring how startLine
-    // chains off report.md's own length above. Read under the same mutex so
-    // concurrent writers for different sessions can't interleave and
-    // produce overlapping raw ranges for the same session.
+    // chains off report.md's own length below. Computed up front (before
+    // the report.md write) so the resulting range can also drive the
+    // mechanical activityLog for this same block.
     let rawStartLine: number | undefined;
     let rawEndLine: number | undefined;
+    let activityLog: string | undefined;
     if (meta.rawEndLine !== undefined) {
       const existingIndexRaw = await readFileIfExists(indexPath);
       // Only chain off prior entries recorded under the same numbering
@@ -245,7 +246,38 @@ export async function recordDistillate(
         .map((e) => e.rawEndLine as number);
       rawStartLine = priorRawEnds.length > 0 ? Math.max(...priorRawEnds) + 1 : 1;
       rawEndLine = meta.rawEndLine;
+
+      if (meta.rawTranscript) {
+        const clampedEndLine = Math.min(rawEndLine, meta.rawTranscript.length);
+        activityLog = summarizeToolActivity(meta.rawTranscript.slice(rawStartLine - 1, clampedEndLine));
+      }
     }
+
+    const reportPath = sessionReportPath(dir, meta.sessionId);
+    await fs.mkdir(path.dirname(reportPath), { recursive: true });
+
+    const existingRaw = await readFileIfExists(reportPath);
+    const startLine = splitLines(existingRaw).length + 1;
+
+    const metaLine = `# ${meta.event} ${meta.ruleId} session=${meta.sessionId} noteType=${meta.noteType} ${meta.timestamp}`;
+    // Written whenever activityLog was computable at all (even "" -- no
+    // tool_use found -- is written as its own line), so the presence of an
+    // Activity line in report.md is itself a signal that this entry's range
+    // was mechanically scanned, regardless of how thin the agent's own
+    // kept_context/summary prose turned out to be.
+    const activityLine = activityLog !== undefined ? `\nActivity: ${activityLog}` : "";
+    const block = `${metaLine}\n${bodyText}${activityLine}\n`;
+    await fs.appendFile(reportPath, block, "utf8");
+
+    const blockLineCount = splitLines(block).length;
+    const endLine = startLine + blockLineCount - 1;
+
+    const capsulePath = sessionCapsulePath(dir, meta.sessionId);
+    await fs.mkdir(path.dirname(capsulePath), { recursive: true });
+    const partsLabel = meta.parts.length === 2 ? "kept+cut" : meta.parts[0];
+    const capsuleLine =
+      "«" + header + "» " + startLine + "-" + endLine + " — [" + partsLabel + "] " + meta.ruleId + "\n";
+    await fs.appendFile(capsulePath, capsuleLine, "utf8");
 
     const indexEntry: CapsuleIndexEntry = {
       ruleId: meta.ruleId,
@@ -257,13 +289,20 @@ export async function recordDistillate(
       sessionId: meta.sessionId,
       timestamp: meta.timestamp,
       ...(rawStartLine !== undefined ? { rawStartLine, rawEndLine, rawSource: meta.rawSource } : {}),
+      ...(activityLog !== undefined ? { activityLog } : {}),
     };
     await fs.appendFile(indexPath, `${JSON.stringify(indexEntry)}\n`, "utf8");
 
     await ensureSessionAlias(dir, meta.sessionId, header, meta.timestamp);
     await writeSessionsIndex(dir);
 
-    return { startLine, endLine };
+    return {
+      startLine,
+      endLine,
+      ...(rawStartLine !== undefined && rawEndLine !== undefined
+        ? { rawSpanLength: rawEndLine - rawStartLine + 1 }
+        : {}),
+    };
   });
 }
 

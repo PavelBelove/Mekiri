@@ -24,7 +24,7 @@ If identity in the current session is its context (see [above](#where-identity-l
 
 ## What's in the code, and what's still an idea
 
-Implemented: `prune` (a single dual-boundary call, superseding the earlier separate `tag`), `sprout`, `graft`, `configure_mekiri`, `metrics` (see [docs/mechanics/](mechanics/)). **Interrogation Mode** (waking a pre-compaction snapshot to interrogate it about lost details) is still a future direction, not a working feature in v0.1.
+Implemented: `prune` (a single dual-boundary call, superseding the earlier separate `tag`), `sprout`, `graft`, `configure_mekiri`, `metrics` (see [docs/mechanics/](mechanics/)). The earlier idea of a separate "Interrogation Mode" — waking a pre-compaction snapshot to interrogate it about lost details — turned out unnecessary once the archive existed: `graft` already does the same thing, pointed at an exact `rule_id` and surfaced as an ordinary tool call, with no separate mode required.
 
 ---
 

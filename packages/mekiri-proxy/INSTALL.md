@@ -99,31 +99,40 @@ Add (or extend, if the file already exists) in the target project:
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --experimental-strip-types \"<MEKIRI_DIR>/packages/mekiri-proxy/bin/stop-hook.ts\""
+          }
+        ]
+      }
     ]
   }
 }
 ```
 
-The path in the hook is also absolute, with the same `<MEKIRI_DIR>`. Don't use `$CLAUDE_PROJECT_DIR` here: this variable resolves to the root of the **target** project, not to the directory where the cloned Mekiri lives — if Mekiri is cloned separately (as recommended in step 1), `$CLAUDE_PROJECT_DIR/packages/mekiri-proxy/...` will point nowhere.
+The paths in both hooks are also absolute, with the same `<MEKIRI_DIR>`. Don't use `$CLAUDE_PROJECT_DIR` here: this variable resolves to the root of the **target** project, not to the directory where the cloned Mekiri lives — if Mekiri is cloned separately (as recommended in step 1), `$CLAUDE_PROJECT_DIR/packages/mekiri-proxy/...` will point nowhere.
+
+The `Stop` hook (`stop-hook.ts`) forces a `prune` call at the end of every turn that has anything left to close — this is what keeps context hygiene from depending on the agent remembering to prune on its own. See [`../../docs/mechanics/architecture.md`](../../docs/mechanics/architecture.md#guaranteeing-the-tail-the-stop-hook-and-preservefromquote) for how it decides whether a turn "has something to close."
 
 ## 5. Skills
 
-Copy all four skills from `<MEKIRI_DIR>/.claude/skills/` into `.claude/skills/` in the target project:
+Copy all three skills from `<MEKIRI_DIR>/.claude/skills/` into `.claude/skills/` in the target project:
 
 ```bash
 cp -r <MEKIRI_DIR>/.claude/skills/mekiri-gate .claude/skills/
-cp -r <MEKIRI_DIR>/.claude/skills/mekiri-orchestrator .claude/skills/
 cp -r <MEKIRI_DIR>/.claude/skills/mekiri-tuning .claude/skills/
 cp -r <MEKIRI_DIR>/.claude/skills/mekiri-warmup .claude/skills/
 ```
-
-`mekiri-orchestrator` also references its own `scripts/*.sh` (`ensure-running.sh`, `send.sh`) — they take the project path as an argument and don't hardcode Mekiri's location, but on first real use it's worth checking once that the scripts can find the right binaries in your environment.
 
 ## 6. `CLAUDE.md` in the target project
 
 Not optional — without this, the target project's agent has no way to know these tools exist or when to reach for them; the MCP wiring alone doesn't teach that.
 
-`<MEKIRI_DIR>/CLAUDE.md` has three trigger paragraphs, each naming a condition and ending in "check the `mekiri-X` skill" (for `mekiri-orchestrator`, `mekiri-gate`, `mekiri-warmup`). They're written generically ("this project", "this session") and are portable as-is. Everything else in that file — the "respond in Russian" line, the "# Mekiri — agent instructions" header, the "this is the Mekiri project itself" description — is specific to this repository and must be skipped.
+`<MEKIRI_DIR>/CLAUDE.md` has three trigger paragraphs, each naming a condition and ending in "check the `mekiri-X` skill" (two for `mekiri-gate`, one for `mekiri-warmup`). They're written generically ("this project", "this session") and are portable as-is. Everything else in that file — the "respond in Russian" line, the "# Mekiri — agent instructions" header, the "this is the Mekiri project itself" description — is specific to this repository and must be skipped.
 
 - **If the target project already has a `CLAUDE.md`**, append the three trigger paragraphs to it (don't overwrite anything already there).
 - **If it doesn't**, create one containing just those three paragraphs.

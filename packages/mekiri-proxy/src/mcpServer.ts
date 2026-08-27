@@ -76,7 +76,14 @@ interface PruneArgs {
 }
 
 type PruneResult =
-  | { status: "ok"; cut_effective_from: "next_request"; rule_id: string; distillate: string; unverified_files?: string[] }
+  | {
+      status: "ok";
+      cut_effective_from: "next_request";
+      rule_id: string;
+      distillate: string;
+      unverified_files?: string[];
+      coverage_hint?: string;
+    }
   | { status: "ambiguous"; occurrences: number; hint: string }
   | { status: "not_found"; hint: string }
   | { status: "in_compacted_zone"; last_compact_message_id: string; hint: string }
@@ -190,6 +197,12 @@ export function createToolHandlers(context: McpServerContext) {
       // recordDistillate skips raw-range recording rather than storing a
       // bogus one -- graft must later report that gracefully, not crash.
       let rawEndLine: number | undefined;
+      // The same shadow-transcript array rawEndLine was resolved against,
+      // passed through to recordDistillate so it can slice out exactly the
+      // rawStartLine..rawEndLine range it's about to chain and compute a
+      // mechanical activityLog from it -- see verifyFruitEvidence.ts's
+      // summarizeToolActivity.
+      let rawTranscript: RawLine[] | undefined;
 
       if (hasCut) {
         // Validation only -- findBoundary confirms the quote is unambiguous against
@@ -222,18 +235,37 @@ export function createToolHandlers(context: McpServerContext) {
         // above -- that position lives in Claude Code's own mutable .jsonl
         // numbering, which is not safe to record long-term (see
         // shadowTranscript.ts). If the shadow transcript hasn't caught up
-        // yet (or the quote genuinely isn't in it), rawEndLine stays
-        // undefined and recordDistillate skips raw-range recording for this
-        // entry, rather than storing a bogus range.
+        // yet (or the quote genuinely isn't in it) even after retrying,
+        // fall back to the transcript's current full length rather than
+        // leaving rawEndLine undefined: an undefined rawEndLine makes
+        // recordDistillate skip raw-range recording for this entry
+        // entirely, which is indistinguishable from a legacy pre-shadow
+        // entry and, if this happens to be the session's last prune call,
+        // permanently strands that tail of raw transcript outside the
+        // graftable chain (nothing after it exists to "absorb" it). The
+        // fallback is deliberately wider than the precise boundary would
+        // have been -- graft returning extra raw content is always safer
+        // than graft silently having none.
         const shadowResult = await resolveBoundaryWithRetry(
           () => readShadowTranscript(context.sessionId),
           args.quote,
         );
         const shadowBoundary = shadowResult.boundary;
-        if (shadowBoundary.status === "ok") {
-          const idx = shadowResult.transcript.findIndex((l) => l.uuid === shadowBoundary.messageId);
-          if (idx >= 0) rawEndLine = idx + 1;
+        const shadowIdx =
+          shadowBoundary.status === "ok"
+            ? shadowResult.transcript.findIndex((l) => l.uuid === shadowBoundary.messageId)
+            : -1;
+        // length > 0 guards the genuine "shadow file doesn't exist yet"
+        // case (readShadowTranscript returns [] for both a missing file and
+        // a merely-empty one) -- falling back to 0 there would record an
+        // inverted rawStartLine=1/rawEndLine=0 range instead of correctly
+        // skipping raw-range recording for nothing having been captured yet.
+        if (shadowIdx >= 0) {
+          rawEndLine = shadowIdx + 1;
+        } else if (shadowResult.transcript.length > 0) {
+          rawEndLine = shadowResult.transcript.length;
         }
+        rawTranscript = shadowResult.transcript;
 
         rule = {
           id,
@@ -242,7 +274,10 @@ export function createToolHandlers(context: McpServerContext) {
         };
       } else {
         const shadowTranscript = await readShadowTranscriptOrNull(context.sessionId);
-        if (shadowTranscript !== null) rawEndLine = shadowTranscript.length;
+        if (shadowTranscript !== null) {
+          rawEndLine = shadowTranscript.length;
+          rawTranscript = shadowTranscript;
+        }
       }
 
       const keptContext = (validation.fruit as PortalFruit | DeathReloadFruit).kept_context;
@@ -259,7 +294,7 @@ export function createToolHandlers(context: McpServerContext) {
       const distillateText = sections.join("\n\n");
 
       const header = deriveHeader(validation.fruit);
-      await recordDistillate(
+      const { rawSpanLength } = await recordDistillate(
         context.dir,
         {
           event: "prune",
@@ -270,10 +305,29 @@ export function createToolHandlers(context: McpServerContext) {
           parts,
           rawEndLine,
           rawSource: rawEndLine !== undefined ? "shadow" : undefined,
+          rawTranscript,
         },
         header,
         distillateText,
       );
+
+      // Non-blocking evidence, not proof -- same spirit as unverifiedFiles
+      // below. A large raw span (this entry covers a lot of real transcript)
+      // paired with near-empty combined prose is exactly the "chat report
+      // richer than the archive" shape of the 2026-08-26 incident: the agent
+      // genuinely believed it archived enough, and nothing forced a second
+      // look. This can only flag for the agent's own judgment, never reject
+      // the call -- a legitimately quiet stretch (re-reading a file,
+      // confirming a hypothesis) can have a large raw span and truthfully
+      // nothing worth keeping.
+      const combinedProseLength =
+        keptContext.trim().length +
+        (hasCut ? ((validation.fruit as PortalFruit | DeathReloadFruit).conclusion.trim().length + distillateText.length) : 0);
+      const coverageHint =
+        rawSpanLength !== undefined && rawSpanLength > 20 && combinedProseLength < 30
+          ? `Этот вызов охватывает ${rawSpanLength} строк сырого транскрипта, но kept_context/summary почти пустые -- ` +
+            "если там на самом деле что-то важное происходило, стоит перепроверить перед следующим prune."
+          : undefined;
 
       const unverifiedFiles =
         hasCut && args.note_type === "portal"
@@ -315,6 +369,7 @@ export function createToolHandlers(context: McpServerContext) {
         rule_id: id,
         distillate: distillateText,
         ...(unverifiedFiles.length > 0 ? { unverified_files: unverifiedFiles } : {}),
+        ...(coverageHint ? { coverage_hint: coverageHint } : {}),
       };
     },
 

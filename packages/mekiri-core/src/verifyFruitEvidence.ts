@@ -53,3 +53,59 @@ export function findUnverifiedPaths(range: RawLine[], fruit: PortalFruit): strin
     (relativePath) => !editedAbsolutePaths.some((absolutePath) => pathsMatch(absolutePath, relativePath)),
   );
 }
+
+/** Best-effort one-line label for a single tool_use block, used only to
+ *  disambiguate identical-name calls in summarizeToolActivity's grouping
+ *  (e.g. which file a Read/Edit touched) -- not a full argument dump. */
+function toolCallLabel(block: ToolUseBlock): string {
+  const input = block.input;
+  if (!input) return "";
+  if (typeof input.file_path === "string") return input.file_path;
+  if (typeof (input as { command?: unknown }).command === "string") {
+    const command = (input as { command: string }).command;
+    return command.length > 40 ? command.slice(0, 40) + "..." : command;
+  }
+  return "";
+}
+
+/**
+ * Mechanical, agent-independent activity trace for `range` (the transcript
+ * slice a prune call covers, kept or cut): counts every tool_use block by
+ * tool name, with a representative label per distinct call. Unlike
+ * kept_context/summary, this is derived straight from the transcript, so it
+ * can't be thin or incomplete the way hand-written prose can -- it's a
+ * factual backstop for the capsule/report record, not a replacement for the
+ * fruit's own narrative.
+ *
+ * Returns "" for a range with no tool_use blocks at all (e.g. a pure
+ * conversation turn) -- an empty activity log is itself informative, not an
+ * error.
+ */
+export function summarizeToolActivity(range: RawLine[]): string {
+  const countsByTool = new Map<string, number>();
+  const labelsByTool = new Map<string, string[]>();
+
+  for (const line of range) {
+    const content = line.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (!isToolUseBlock(block)) continue;
+      if (!block.name) continue;
+      countsByTool.set(block.name, (countsByTool.get(block.name) ?? 0) + 1);
+      const label = toolCallLabel(block);
+      if (label) {
+        const labels = labelsByTool.get(block.name) ?? [];
+        labels.push(label);
+        labelsByTool.set(block.name, labels);
+      }
+    }
+  }
+
+  const entries = [...countsByTool.entries()].map(([name, count]) => {
+    const uniqueLabels = [...new Set(labelsByTool.get(name) ?? [])];
+    const suffix = uniqueLabels.length > 0 ? `(${uniqueLabels.slice(0, 3).join(", ")}${uniqueLabels.length > 3 ? ", ..." : ""})` : "";
+    return `${name}×${count}${suffix}`;
+  });
+
+  return entries.join(", ");
+}

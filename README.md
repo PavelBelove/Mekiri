@@ -65,7 +65,7 @@ The next request to the model from this session no longer contains the 500 log l
 
 ## Status
 
-V 0.3. Implemented and used in the project's own day-to-day design (dogfooding): `prune` (a single dual-boundary call, superseding the earlier separate `tag`), `sprout`, `graft`, `configure_mekiri`, `metrics`, `nudge-hook` (a forced reminder to use the tools), `Stop`-hook-forced `prune` (guarantees a session's final stretch always gets indexed into the archive, even if the agent never calls `prune` again on its own — see [architecture.md](docs/mechanics/architecture.md#guaranteeing-the-tail-the-stop-hook-and-preservefromquote)). Not implemented: Interrogation Mode, `sprout` with `wait_mode: "async"`.
+V 0.3. Implemented and used in the project's own day-to-day design (dogfooding): `prune` (a single dual-boundary call, superseding the earlier separate `tag`), `sprout`, `graft`, `configure_mekiri`, `metrics`, `nudge-hook` (a forced reminder to use the tools), `Stop`-hook-forced `prune` (guarantees a session's final stretch always gets indexed into the archive, even if the agent never calls `prune` again on its own — see [architecture.md](docs/mechanics/architecture.md#guaranteeing-the-tail-the-stop-hook-and-preservefromquote)). Not implemented: `sprout` with `wait_mode: "async"`.
 
 ## Installation
 

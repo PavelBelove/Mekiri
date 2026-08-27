@@ -13,6 +13,18 @@ import {
   slugify,
   type ReportEntryMeta,
 } from "../src/reportStore.js";
+import type { RawLine } from "../src/types.js";
+
+function toolUseLine(name: string, input: Record<string, unknown>): RawLine {
+  return {
+    type: "assistant",
+    uuid: "asst-tool",
+    message: {
+      role: "assistant",
+      content: [{ type: "tool_use", name, input } as unknown as { type: string; text?: string }],
+    },
+  };
+}
 
 function meta(overrides: Partial<ReportEntryMeta> = {}): ReportEntryMeta {
   return {
@@ -225,6 +237,89 @@ describe("reportStore", () => {
       expect(shadowEntry?.rawStartLine).toBe(1);
       expect(shadowEntry?.rawEndLine).toBe(30);
       expect(shadowEntry?.rawSource).toBe("shadow");
+    });
+  });
+
+  describe("activityLog and rawSpanLength", () => {
+    it("computes activityLog from the rawStartLine..rawEndLine slice of rawTranscript and returns rawSpanLength", async () => {
+      const rawTranscript: RawLine[] = [
+        toolUseLine("Read", { file_path: "/x/a.md" }),
+        toolUseLine("Edit", { file_path: "/x/a.md" }),
+        toolUseLine("Bash", { command: "npm test" }),
+      ];
+      const result = await recordDistillate(
+        dir,
+        meta({ rawEndLine: 3, rawSource: "shadow", rawTranscript }),
+        "h1",
+        "body",
+      );
+
+      expect(result.rawSpanLength).toBe(3);
+
+      const entry = await findCapsuleEntry(dir, "rule-1");
+      expect(entry?.activityLog).toBe("Read×1(/x/a.md), Edit×1(/x/a.md), Bash×1(npm test)");
+
+      const reportRaw = await fs.readFile(path.join(dir, ".mekiri", "sessions", "session-1", "report.md"), "utf8");
+      expect(reportRaw).toContain("Activity: Read×1(/x/a.md), Edit×1(/x/a.md), Bash×1(npm test)");
+    });
+
+    it("writes an empty Activity line when the raw range has no tool_use blocks", async () => {
+      const rawTranscript: RawLine[] = [
+        { type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: "hi" }] } },
+      ];
+      await recordDistillate(dir, meta({ rawEndLine: 1, rawSource: "shadow", rawTranscript }), "h1", "body");
+
+      const entry = await findCapsuleEntry(dir, "rule-1");
+      expect(entry?.activityLog).toBe("");
+
+      const reportRaw = await fs.readFile(path.join(dir, ".mekiri", "sessions", "session-1", "report.md"), "utf8");
+      expect(reportRaw).toContain("Activity: \n");
+    });
+
+    it("clamps activityLog computation to the actual rawTranscript length when rawEndLine overshoots it", async () => {
+      const rawTranscript: RawLine[] = [toolUseLine("Read", { file_path: "/x/a.md" })];
+      await recordDistillate(dir, meta({ rawEndLine: 99, rawSource: "shadow", rawTranscript }), "h1", "body");
+
+      const entry = await findCapsuleEntry(dir, "rule-1");
+      expect(entry?.activityLog).toBe("Read×1(/x/a.md)");
+    });
+
+    it("chains rawStartLine correctly and slices only the second entry's own portion for its activityLog", async () => {
+      const rawTranscript: RawLine[] = [
+        toolUseLine("Read", { file_path: "/x/a.md" }),
+        toolUseLine("Edit", { file_path: "/x/b.md" }),
+        toolUseLine("Bash", { command: "npm test" }),
+      ];
+      await recordDistillate(dir, meta({ ruleId: "rule-1", rawEndLine: 1, rawSource: "shadow", rawTranscript }), "h1", "body one");
+      const second = await recordDistillate(
+        dir,
+        meta({ ruleId: "rule-2", rawEndLine: 3, rawSource: "shadow", rawTranscript }),
+        "h2",
+        "body two",
+      );
+
+      expect(second.rawSpanLength).toBe(2);
+      const entry = await findCapsuleEntry(dir, "rule-2");
+      expect(entry?.activityLog).toBe("Edit×1(/x/b.md), Bash×1(npm test)");
+    });
+
+    it("omits activityLog and rawSpanLength entirely when the caller has no rawEndLine", async () => {
+      const result = await recordDistillate(dir, meta(), "h1", "body");
+      expect(result.rawSpanLength).toBeUndefined();
+
+      const entry = await findCapsuleEntry(dir, "rule-1");
+      expect(entry?.activityLog).toBeUndefined();
+
+      const reportRaw = await fs.readFile(path.join(dir, ".mekiri", "sessions", "session-1", "report.md"), "utf8");
+      expect(reportRaw).not.toContain("Activity:");
+    });
+
+    it("omits activityLog when rawEndLine is set but no rawTranscript is supplied", async () => {
+      const result = await recordDistillate(dir, meta({ rawEndLine: 5, rawSource: "shadow" }), "h1", "body");
+      expect(result.rawSpanLength).toBe(5);
+
+      const entry = await findCapsuleEntry(dir, "rule-1");
+      expect(entry?.activityLog).toBeUndefined();
     });
   });
 

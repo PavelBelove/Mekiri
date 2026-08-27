@@ -59,12 +59,23 @@ export async function readShadowTranscriptOrNull(sessionId: string): Promise<Raw
   return raw === null ? null : parseTranscript(raw);
 }
 
-// How many messages have already been appended to each session's shadow
-// file, so a later call with the same (or a shorter, stale) `messages`
-// array is a cheap no-op instead of re-reading the file to find out. Reset
-// on daemon restart -- appendNewShadowMessages lazily reseeds it from disk
-// the first time a given sessionId is seen again.
-const archivedCounts = new Map<string, number>();
+// Two independently-tracked per-session counters. They coincide under
+// normal monotonic growth, which is why a single counter used to suffice --
+// but Claude Code's native auto-compaction breaks that assumption (it
+// replaces older history with one synthetic summary message, shrinking the
+// wire array), so they're kept separate:
+//
+// - lastSeenLengths: length of the last `messages` array processed, used
+//   only to diff the *next* call's array against (did it grow, and by how
+//   much new tail).
+// - fileLineCounts: actual number of lines appended to the shadow file so
+//   far, used only to compute unique `uuid` offsets for newly appended
+//   lines.
+//
+// Both reset on daemon restart -- appendNewShadowMessages lazily reseeds
+// them from disk the first time a given sessionId is seen again.
+const lastSeenLengths = new Map<string, number>();
+const fileLineCounts = new Map<string, number>();
 
 // Serializes concurrent appends for the same session (e.g. overlapping
 // requests from a sprout child sharing the parent's proxy) so dozapisi
@@ -103,21 +114,37 @@ async function countExistingLines(sessionId: string): Promise<number> {
  * regardless of mekiri's own (wire-only) cuts, so this array's length grows
  * monotonically at the wire level even when Claude Code's own on-disk
  * .jsonl transcript does not (see shadowTranscript's raison d'être: fixing
- * graft's dependence on that non-monotonic file).
+ * graft's dependence on that non-monotonic file) -- with one exception:
+ * native auto-compaction shrinks the wire array itself (it replaces older
+ * history with a single synthetic summary message). A shorter array than
+ * last seen is treated as that shrink, not as stale/duplicate input: the
+ * whole (shorter) array is archived as new rather than skipped, so real
+ * content right after a compaction doesn't silently go unarchived while
+ * waiting for the array to organically regrow past the old peak. This can
+ * duplicate a compaction's kept verbatim tail (already archived once
+ * before it shrank) -- a small duplicated stretch is strictly safer than
+ * an unbounded silent gap.
  */
 export async function appendNewShadowMessages(sessionId: string, messages: WireMessage[]): Promise<void> {
   await withSessionMutex(sessionId, async () => {
-    const cached = archivedCounts.get(sessionId);
-    const already = cached === undefined ? await countExistingLines(sessionId) : cached;
-    if (messages.length <= already) {
-      archivedCounts.set(sessionId, already);
+    const cachedLastSeen = lastSeenLengths.get(sessionId);
+    const lastSeen = cachedLastSeen === undefined ? await countExistingLines(sessionId) : cachedLastSeen;
+    if (messages.length === lastSeen) {
+      lastSeenLengths.set(sessionId, lastSeen);
       return;
     }
-    const newOnes = messages.slice(already);
-    const lines = newOnes.map((m, i) => JSON.stringify(toRawLine(m, sessionId, already + i))).join("\n") + "\n";
+
+    const newOnes = messages.length > lastSeen ? messages.slice(lastSeen) : messages;
+
+    const cachedFileLines = fileLineCounts.get(sessionId);
+    const fileLines = cachedFileLines === undefined ? await countExistingLines(sessionId) : cachedFileLines;
+
+    const lines = newOnes.map((m, i) => JSON.stringify(toRawLine(m, sessionId, fileLines + i))).join("\n") + "\n";
     const filePath = shadowTranscriptPath(sessionId);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.appendFile(filePath, lines, "utf8");
-    archivedCounts.set(sessionId, messages.length);
+
+    fileLineCounts.set(sessionId, fileLines + newOnes.length);
+    lastSeenLengths.set(sessionId, messages.length);
   });
 }
