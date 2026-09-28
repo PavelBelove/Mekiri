@@ -243,6 +243,8 @@ export function applyReset(messages: unknown[], excluded: Set<number>, rule: Res
 // Creating a reset rule
 
 const CAPSULE_CHAR_LIMIT = 12_000;
+/** Share of the messages' (estimated) tokens a reset must drop to be worth it. */
+const MIN_DROP_SHARE = 0.3;
 
 export function buildInstruction(args: {
   estimate: number;
@@ -293,6 +295,15 @@ export async function createResetRule(args: CreateResetArgs): Promise<ResetRule 
   const minCut = currentResetStart(messages, args.resetRules);
   const choice = chooseCut(messages, args.excluded, minCut, args.settings);
   if (!choice) return null;
+  // A reset has to free real room. When the prefix (system, tools) plus the
+  // tail alone sit near the threshold, every request would otherwise reset
+  // again, a message further each time, breaking the prompt cache for nothing.
+  const tokensOf = (from: number, to: number) => {
+    let sum = 0;
+    for (let i = from; i < to; i++) if (!args.excluded.has(i)) sum += estimateTokens(messages[i]);
+    return sum;
+  };
+  if (tokensOf(minCut, choice.cut) < MIN_DROP_SHARE * tokensOf(minCut, messages.length)) return null;
 
   const id = randomUUID();
   const timestamp = (args.now ?? new Date()).toISOString();

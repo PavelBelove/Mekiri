@@ -161,8 +161,8 @@ describe("contextReset", () => {
     it("records the unarchived stretch as [auto-reset] and puts the capsule into the instruction", async () => {
       const { createResetRule } = await import("../src/contextReset.js");
       const { appendNewShadowMessages } = await import("../src/shadowTranscript.js");
-      const turn = (i: number) => [user(`p${i}`), call(`t${i}`), result(`t${i}`), reply(`r${i}`)];
-      const messages = [...turn(0), ...turn(1), ...turn(2), ...turn(3), ...turn(4)];
+      const turn = (i: number, out = "ok") => [user(`p${i}`), call(`t${i}`), result(`t${i}`, out), reply(`r${i}`)];
+      const messages = [...turn(0, big(40_000)), ...turn(1), ...turn(2), ...turn(3), ...turn(4)];
       await appendNewShadowMessages("s", messages);
 
       const rule = await createResetRule({
@@ -186,6 +186,13 @@ describe("contextReset", () => {
       expect(rule!.instruction).toContain("mekiri-warmup");
       expect(rule!.instruction).toContain(`graft("${rule!.id}")`);
       expect(rule!.instruction).toContain("This session's capsule.md:\n«[auto-reset]");
+    });
+
+    it("declines a reset that would free little room, so it can't fire on every request", async () => {
+      const { createResetRule } = await import("../src/contextReset.js");
+      const turn = (i: number) => [user(`p${i}`), reply(`r${i}`)];
+      const messages = [...turn(0), ...turn(1), user("p2"), call("a"), result("a", big(60_000))];
+      expect(await createResetRule({ sessionId: "s", messages, excluded: new Set(), resetRules: [], settings, estimate: 1000 })).toBeNull();
     });
 
     it("writes no record when the tail starts at the last prune, and none without a project dir", async () => {

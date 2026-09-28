@@ -74,7 +74,8 @@ export async function createDaemon(options: DaemonOptions): Promise<DaemonHandle
       estimate,
     });
     if (!rule) return;
-    rules.set(sessionId, [...sessionRules, rule]);
+    // Re-read: a prune rule may have arrived over /control/rule meanwhile.
+    rules.set(sessionId, [...(rules.get(sessionId) ?? []), rule]);
     await appendRule(sessionId, dir, rule);
   }
 
