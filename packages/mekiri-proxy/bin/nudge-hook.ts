@@ -58,7 +58,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  const dir = input.cwd ?? process.cwd();
+  // CLAUDE_PROJECT_DIR first: `input.cwd` follows the agent's own `cd`, and a
+  // `cd` into a subdirectory silently split this session's state into a second
+  // `.mekiri/hook-state` file there, never reset by the MCP server's prune
+  // (which keys on the project root) -- a phantom hard block.
+  const dir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd();
   const configPath = path.join(dir, ".mekiri", "config.json");
 
   const [hookState, deferCalls] = await Promise.all([

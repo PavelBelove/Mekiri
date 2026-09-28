@@ -40,7 +40,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const dir = input.cwd ?? process.cwd();
+  // CLAUDE_PROJECT_DIR first, same reason as bin/nudge-hook.ts: `input.cwd`
+  // follows the agent's `cd`, which would read stopHook.enabled from the wrong
+  // config and leave stopBoundary where prune never looks.
+  const dir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd();
   const configPath = path.join(dir, ".mekiri", "config.json");
 
   const [hookState, enabled] = await Promise.all([
