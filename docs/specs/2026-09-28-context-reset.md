@@ -90,9 +90,10 @@ Lower the threshold for a test session (a `configure_mekiri` patch, or a manual 
 - `README.md` status list.
 - `AGENT-SELF-SETUP-GUIDE.md` / `INSTALL.md`: the auto-compaction override step, explained in the tour.
 
-## Open questions
+## Resolved questions
 
-- Exact default threshold, and Claude Code's current auto-compaction point to align it with.
-- Token estimation method (local estimate vs `count_tokens`).
-- Whether `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is still the right knob, and what value to use for the insurance.
-- The injected instruction's exact wording: it has to make a fresh agent warm up first without making it redo work.
+- Default threshold: `(window − 13k) × 0.9`, where window − 13k is Claude Code's own auto-compaction point; the window is 1M only when the request carries the `context-1m` beta, else 200k. `contextReset.thresholdTokens` overrides it.
+- Token estimation: local and conservative (chars / 3.2 for ASCII, / 1.6 otherwise, 1600 per image, base64 and signatures skipped). No `count_tokens` round trip on the hot path.
+- `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is not the right knob: it is clamped with `Math.min`, so it can only make compaction earlier (anthropics/claude-code#31806). No setting is needed — the proxy's smaller requests keep Claude Code's `usage` below its threshold, and native compaction stays as insurance when the proxy is down.
+- Instruction wording: see `buildInstruction` in `packages/mekiri-proxy/src/contextReset.ts` — warm up with `mekiri-warmup` first, the capsule inline, `graft` hints for the prompt log and the `[auto-reset]` record, and the last prompt verbatim.
+- Opt-in per project (`contextReset.enabled`, default false), since the daemon is shared machine-wide; the daemon learns each session's directory at MCP start (`POST /control/session`).

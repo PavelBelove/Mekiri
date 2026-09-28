@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { ensureDaemon } from "../src/daemonEnsure.js";
-import { createToolHandlers, postControlRuleOverHttp } from "../src/mcpServer.js";
+import { createToolHandlers, postControlRuleOverHttp, registerSessionOverHttp } from "../src/mcpServer.js";
 
 const PORT = Number(process.env.MEKIRI_PROXY_PORT ?? 8791);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -18,6 +18,8 @@ async function main() {
 
   const daemonEntry = path.join(__dirname, "daemon.ts");
   await ensureDaemon({ port: PORT, spawnCommand: "npx", spawnArgs: ["tsx", daemonEntry, String(PORT)] });
+  // Best effort: an older daemon without /control/session just answers 404.
+  await registerSessionOverHttp(PORT, sessionId, process.cwd()).catch(() => {});
 
   const handlers = createToolHandlers({
     sessionId,

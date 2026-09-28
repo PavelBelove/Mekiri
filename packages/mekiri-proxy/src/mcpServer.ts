@@ -32,20 +32,29 @@ export interface McpServerContext {
   postControlRule: (body: { sessionId: string; dir: string; rule: RewriteRule }) => Promise<void>;
 }
 
+function postControlOverHttp(daemonPort: number, urlPath: string, body: unknown): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const payload = Buffer.from(JSON.stringify(body), "utf8");
+    const req = http.request(
+      { hostname: "127.0.0.1", port: daemonPort, path: urlPath, method: "POST", headers: { "content-type": "application/json", "content-length": payload.length } },
+      (res) => {
+        res.on("data", () => {});
+        res.on("end", () => (res.statusCode === 200 ? resolve() : reject(new Error(`daemon returned ${res.statusCode}`))));
+      }
+    );
+    req.on("error", reject);
+    req.end(payload);
+  });
+}
+
 export function postControlRuleOverHttp(daemonPort: number) {
   return (body: { sessionId: string; dir: string; rule: RewriteRule }): Promise<void> =>
-    new Promise((resolve, reject) => {
-      const payload = Buffer.from(JSON.stringify(body), "utf8");
-      const req = http.request(
-        { hostname: "127.0.0.1", port: daemonPort, path: "/control/rule", method: "POST", headers: { "content-type": "application/json", "content-length": payload.length } },
-        (res) => {
-          res.on("data", () => {});
-          res.on("end", () => (res.statusCode === 200 ? resolve() : reject(new Error(`daemon returned ${res.statusCode}`))));
-        }
-      );
-      req.on("error", reject);
-      req.end(payload);
-    });
+    postControlOverHttp(daemonPort, "/control/rule", body);
+}
+
+/** Tells the daemon which project a session belongs to, before any prune. */
+export function registerSessionOverHttp(daemonPort: number, sessionId: string, dir: string): Promise<void> {
+  return postControlOverHttp(daemonPort, "/control/session", { sessionId, dir });
 }
 
 function renderDistillate(noteType: NoteType, fruit: PortalFruit | DeathReloadFruit): string {

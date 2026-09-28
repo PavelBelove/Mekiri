@@ -30,6 +30,19 @@ const StopHookSchema = z.object({
   enabled: z.boolean().default(false),
 });
 
+// Mekiri's replacement for Claude Code's auto-compaction (see
+// docs/mechanics/context-reset.md): near the limit, mekiri-proxy drops the
+// middle of the conversation, keeps the tail and has the agent warm up from
+// the library. Off by default for the same reason as stopHook: the proxy
+// daemon is shared by every project on the machine. thresholdTokens 0 means
+// "auto": just below where Claude Code's own auto-compaction would fire.
+const ContextResetSchema = z.object({
+  enabled: z.boolean().default(false),
+  thresholdTokens: z.number().int().min(0).default(0),
+  tailTokens: z.number().int().min(1000).default(20000),
+  tailTurns: z.number().int().min(1).default(4),
+});
+
 export const MekiriConfigSchema = z.object({
   // The outer default is *derived* by re-parsing {} through the same inner
   // schema, rather than a hand-written literal — zod v4's .default() does
@@ -42,6 +55,7 @@ export const MekiriConfigSchema = z.object({
   priorities: PrioritiesSchema.default(() => PrioritiesSchema.parse({})),
   nudge: NudgeSchema.default(() => NudgeSchema.parse({})),
   stopHook: StopHookSchema.default(() => StopHookSchema.parse({})),
+  contextReset: ContextResetSchema.default(() => ContextResetSchema.parse({})),
 });
 
 export type MekiriConfig = z.infer<typeof MekiriConfigSchema>;

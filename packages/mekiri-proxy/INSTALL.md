@@ -137,6 +137,10 @@ Not optional — without this, the target project's agent has no way to know the
 - **If the target project already has a `CLAUDE.md`**, append the three trigger paragraphs to it (don't overwrite anything already there).
 - **If it doesn't**, create one containing just those three paragraphs.
 
+## 6a. Optional: replace auto-compaction with a context reset
+
+Off by default. Once the rest is wired, the project's agent can turn it on with `configure_mekiri({ patch: { contextReset: { enabled: true } } })` (it lands in the project's `.mekiri/config.json`). Near the context limit the proxy then drops the middle of the conversation, keeps the tail, and has the agent warm itself up from the library instead of letting Claude Code summarize everything. Don't try to push Claude Code's own auto-compaction later with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`: it can only lower the threshold, and it doesn't need to move — the proxy's smaller requests keep Claude Code under it. Details: [`../../docs/mechanics/context-reset.md`](../../docs/mechanics/context-reset.md).
+
 ## 7. Verification
 
 After restarting Claude Code in the target project with `ANTHROPIC_BASE_URL` applied:

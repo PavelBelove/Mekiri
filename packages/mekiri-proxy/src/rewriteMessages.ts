@@ -11,6 +11,12 @@ export interface RewriteRule {
   preserveFromQuote?: string;
 }
 
+import { applyReset, isResetRule } from "./contextReset.js";
+import type { ResetRule } from "./contextReset.js";
+
+/** Everything stored per session in rules.json: prune cuts and context resets. */
+export type SessionRule = RewriteRule | ResetRule;
+
 interface MessageShape {
   role?: string;
   content?: unknown;
@@ -152,13 +158,23 @@ function resolveRanges(messages: unknown[], rules: RewriteRule[]): ResolvedRange
   return ranges;
 }
 
-export function rewriteMessages(messages: unknown[], rules: RewriteRule[] | undefined): unknown[] {
-  if (!rules || rules.length === 0) return messages;
-  const ranges = resolveRanges(messages, rules);
-  if (ranges.length === 0) return messages;
+/** Indices of `messages` removed by the prune rules among `rules`. */
+export function computeExcluded(messages: unknown[], rules: SessionRule[]): Set<number> {
+  const pruneRules = rules.filter((r): r is RewriteRule => !isResetRule(r));
   const excluded = new Set<number>();
-  for (const range of ranges) {
+  for (const range of resolveRanges(messages, pruneRules)) {
     for (let i = range.start; i < range.end; i++) excluded.add(i);
   }
+  return excluded;
+}
+
+export function rewriteMessages(messages: unknown[], rules: SessionRule[] | undefined): unknown[] {
+  if (!rules || rules.length === 0) return messages;
+  const excluded = computeExcluded(messages, rules);
+  // Prune cuts first, then the latest reset on top: a prune range that spans
+  // the reset boundary still cuts its part of the kept tail.
+  const resets = rules.filter(isResetRule);
+  if (resets.length > 0) return applyReset(messages, excluded, resets[resets.length - 1]);
+  if (excluded.size === 0) return messages;
   return messages.filter((_, i) => !excluded.has(i));
 }

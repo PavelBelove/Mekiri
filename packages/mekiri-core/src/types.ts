@@ -67,7 +67,9 @@ export interface CapsuleIndexEntry {
   header: string;
   startLine: number;
   endLine: number;
-  event: "prune";
+  /** "auto-reset": written by mekiri-proxy itself when it reset the context
+   *  near the limit, covering the not-yet-archived stretch it dropped. */
+  event: "prune" | "auto-reset";
   /** Which halves of the merged `prune` call actually fired: "kept" (the
    *  archive-only, former `tag` half -- nothing removed from live context)
    *  and/or "cut" (context actually removed and replaced by a distillate). */

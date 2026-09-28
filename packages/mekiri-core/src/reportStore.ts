@@ -136,7 +136,7 @@ export async function writeSessionsIndex(dir: string): Promise<void> {
 }
 
 export interface ReportEntryMeta {
-  event: "prune";
+  event: "prune" | "auto-reset";
   sessionId: string;
   ruleId: string;
   noteType: NoteType;

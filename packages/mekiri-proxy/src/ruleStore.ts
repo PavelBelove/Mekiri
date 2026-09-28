@@ -1,11 +1,11 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { RewriteRule } from "./rewriteMessages.js";
+import type { SessionRule } from "./rewriteMessages.js";
 
 export interface StoredRuleEntry {
   dir: string;
-  rules: RewriteRule[];
+  rules: SessionRule[];
   updatedAt: string;
 }
 
@@ -45,10 +45,21 @@ export async function loadAllRules(): Promise<Record<string, StoredRuleEntry>> {
   }
 }
 
-export async function appendRule(sessionId: string, dir: string, rule: RewriteRule): Promise<void> {
+export async function appendRule(sessionId: string, dir: string, rule: SessionRule): Promise<void> {
   const all = await loadAllRules();
   const existing = all[sessionId]?.rules ?? [];
   all[sessionId] = { dir, rules: [...existing, rule], updatedAt: new Date().toISOString() };
+  await fs.mkdir(resolveStateDir(), { recursive: true });
+  await fs.writeFile(rulesFilePath(), JSON.stringify(all, null, 2), "utf8");
+}
+
+/** Records a session's project directory before it has any rule, so the
+ *  daemon knows where that session's config and library live (see
+ *  contextReset.ts) even when the session only ever runs empty prunes. */
+export async function setSessionDir(sessionId: string, dir: string): Promise<void> {
+  const all = await loadAllRules();
+  if (all[sessionId]?.dir === dir) return;
+  all[sessionId] = { dir, rules: all[sessionId]?.rules ?? [], updatedAt: new Date().toISOString() };
   await fs.mkdir(resolveStateDir(), { recursive: true });
   await fs.writeFile(rulesFilePath(), JSON.stringify(all, null, 2), "utf8");
 }

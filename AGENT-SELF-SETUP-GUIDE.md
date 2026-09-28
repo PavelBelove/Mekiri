@@ -149,6 +149,12 @@ There are two distinct setups. Pick one before you start:
      chain — MCP wiring, daemon, per-project routing — is actually working end to end, not
      just that a health check returned 200.
 
+   - Optional, once the above works: offer the user the context reset that replaces Claude
+     Code's auto-compaction (`configure_mekiri({ patch: { contextReset: { enabled: true } } })`,
+     off by default — see `<MEKIRI_DIR>/docs/mechanics/context-reset.md`). Don't turn it on
+     without asking, and don't touch `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` for it: that variable
+     can only make Claude Code compact earlier.
+
 10. **If something's still not working**, check for a stale competing install before assuming
     the repo is broken: `ps aux | grep mekiri-proxy` and see what path the running
     `mcp-server.ts`/`daemon.ts` processes actually point at (`/health`'s `sourceDir` field
