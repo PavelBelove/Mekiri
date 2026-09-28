@@ -34,7 +34,7 @@ describe("decideStopHook", () => {
     expect(result.block?.reason).toContain("prune");
     expect(result.nextState.stopBoundary?.lastAssistantMessage).toBe("final report");
     expect(result.nextState.stopBoundary?.setAt).toBeTruthy();
-    expect(result.nextState.nudge).toEqual(NUDGE);
+    expect(result.nextState.nudge).toEqual({ ...NUDGE, stopForcedPrune: true });
   });
 
   it("overwrites an already-set stopBoundary flag with the latest message rather than stacking", () => {

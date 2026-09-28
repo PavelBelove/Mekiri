@@ -28,6 +28,19 @@ Each entry in `report.md` also carries an `Activity:` line — a mechanical tall
 
 The layer beneath the distillate. `graft(rule_id)` reaches past `report.md`'s summary into `.mekiri/capsule-index.jsonl` (a flat, project-wide, machine-only index — one line per `prune` call across every session, letting `graft` find the right session and byte range in a single lookup) and returns the *original* transcript fragment that call once covered — the request as it was actually phrased, the reasoning as it actually ran, wrapped in recovery metadata (`event`, `session`, `timestamp`). Not a second summary: the same words a past session actually generated, recoverable in one tool call, from any session in the project, at any point after the fact.
 
+### The user's own prompts
+
+The layers above record what the *agent* concluded. What the *user* asked is recorded separately: every user prompt, verbatim, with its attachments (images, documents), captured by `mekiri-proxy` off the wire. Each session's `capsule.md` gets a metadata-only line per prompt, interleaved with the `prune` entries in chronological order:
+
+```
+[user #7] 12:22 · 96 KB · 1 812 lines · log · interrupted · 2 attachments — graft("user#7")
+[user #8] 12:25 · 64 B · speech — graft("user#8")
+```
+
+`kind` (`speech` / `log` / `code` / `mixed`) comes from a cheap classifier (gzip ratio, share of log-like and code-like lines), so a 96 KB pasted log is distinguishable from a 96 KB instruction without opening it. `interrupted` means the prompt came right after the user stopped the agent (or the connection dropped): it may carry a correction. The text itself is only reachable through `graft("user#7")`, `graft("user#7-10")`, or `graft("<sessionId>:user#7-10")` for a past session.
+
+**The prompts never enter the project.** They live under `~/.mekiri-proxy/prompts/<sessionId>/` (directory `0700`, files `0600`), next to the shadow transcripts. Users paste API keys, tokens and personal data into prompts; `.mekiri/` is gitignored, but one mistake in one project would publish everything, so the project library holds only the metadata lines above.
+
 The practical trigger for reaching this deep: a distillate is the agent's own summary of what happened and cannot self-certify that summary's accuracy. When something in `report.md` reads as insufficient — a decision whose exact wording matters, an agreement with the user that needs checking word-for-word, a suspicion that the summary was written before the underlying work was actually verified — `graft` is how that gets checked against what actually happened, instead of against what was later said to have happened.
 
 ## Why not RAG, why not Zettelkasten
@@ -60,6 +73,11 @@ The archive's storage cost is close to zero: it's a growing set of flat files on
       capsule.md                # Layer 1 — this session's table of contents
       report.md                 # Layer 2 — this session's distillate bodies
     <date>-<slug>/               # human-readable alias (symlink) to <session_id>/
+
+~/.mekiri-proxy/                 # outside the project, per user
+  raw-transcripts/<session_id>.jsonl   # shadow transcript -- graft(rule_id) reads this
+  prompts/<session_id>/                # user prompts -- graft("user#N") reads this
+    index.jsonl  001.md  001-1.png  ...
 ```
 
 `session_id` is the Claude Code transcript ID and can't be renamed; the `<date>-<slug>` alias is a navigation convenience on top of it, not a replacement for addressing by `rule_id`. See [prune-and-graft.md](prune-and-graft.md) for how `fruit` gets written in the first place, and the `mekiri-warmup` skill for the read path a session actually follows when it needs to use this.

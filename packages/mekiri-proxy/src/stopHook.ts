@@ -69,7 +69,7 @@ export function decideStopHook(
 
   const stopBoundary = { lastAssistantMessage: input.lastAssistantMessage, setAt: new Date().toISOString() };
   return {
-    nextState: { nudge, stopBoundary },
+    nextState: { nudge: { ...nudge, stopForcedPrune: true }, stopBoundary },
     block: { reason: BLOCK_REASON },
   };
 }

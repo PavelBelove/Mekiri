@@ -40,6 +40,7 @@ vi.mock("mekiri-core", async () => {
 // prune calls resolve rawEndLine the same way the live-transcript mock
 // above resolves quote validation.
 vi.mock("../src/shadowTranscript.js", () => ({
+  COMPACTION_SUMMARY_PREFIX: "This session is being continued from a previous conversation",
   readShadowTranscript: vi.fn(async () => FIXTURE_TRANSCRIPT),
   readShadowTranscriptOrNull: vi.fn(async () => FIXTURE_TRANSCRIPT),
 }));
@@ -836,3 +837,123 @@ describe("metrics handler", () => {
     expect(result.report.trees.map((t) => t.rootSessionId).sort()).toEqual(["s1", "s2"]);
   });
 });
+
+describe("user prompts: capsule lines and graft", () => {
+  let stateDir: string;
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 9, 9]);
+
+  // Writes a prompt log the way promptLog.ts lays it out on disk.
+  async function writePrompts(sessionId: string, prompts: { text: string; png?: boolean; interrupted?: boolean }[]) {
+    const dir = path.join(stateDir, "prompts", sessionId);
+    await fsp.mkdir(dir, { recursive: true });
+    const lines = [];
+    for (const [i, p] of prompts.entries()) {
+      const n = i + 1;
+      const stem = String(n).padStart(3, "0");
+      await fsp.writeFile(path.join(dir, `${stem}.md`), p.text);
+      const attachments = [];
+      if (p.png) {
+        await fsp.writeFile(path.join(dir, `${stem}-1.png`), PNG);
+        attachments.push({ file: `${stem}-1.png`, mediaType: "image/png", bytes: PNG.length });
+      }
+      lines.push(
+        JSON.stringify({
+          n,
+          timestamp: "2026-09-28T12:22:00.000Z",
+          messageIndex: i * 2,
+          textHash: `h${n}`,
+          bytes: Buffer.byteLength(p.text),
+          lines: p.text.split("\n").length,
+          kind: "speech",
+          gzipRatio: 1,
+          interrupted: p.interrupted ?? false,
+          attachments,
+          blockHashes: [`b${n}`],
+        }),
+      );
+    }
+    await fsp.writeFile(path.join(dir, "index.jsonl"), lines.join("\n") + "\n");
+  }
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(path.join(tmpdir(), "mekiri-mcpserver-prompts-"));
+    process.env.MEKIRI_PROXY_STATE_DIR = stateDir;
+  });
+
+  afterEach(() => {
+    delete process.env.MEKIRI_PROXY_STATE_DIR;
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  const handlersFor = (sessionId = "s1") =>
+    createToolHandlers({ sessionId, dir: projectDir, depth: 0, daemonPort: 8791, postControlRule: vi.fn() });
+
+  it("prune writes [user #N] lines before its own entry, once, without prompt text", async () => {
+    await writePrompts("s1", [{ text: "SECRET-KEY-123 почини баги" }, { text: "стоп", interrupted: true }]);
+    const handlers = handlersFor();
+    const fruit = { summary: "", kept_context: "k", conclusion: "first" };
+    await handlers.prune({ quote: "", note_type: "portal", fruit, keep_code: false });
+    await handlers.prune({ quote: "", note_type: "portal", fruit: { ...fruit, conclusion: "second" }, keep_code: false });
+
+    const capsule = await fsp.readFile(path.join(projectDir, ".mekiri", "sessions", "s1", "capsule.md"), "utf8");
+    const lines = capsule.trimEnd().split("\n");
+    expect(lines[0]).toMatch(/^\[user #1\] \d\d:\d\d · \d+ B · speech — graft\("user#1"\)$/);
+    expect(lines[1]).toContain("[user #2]");
+    expect(lines[1]).toContain("interrupted");
+    expect(lines[2]).toContain("first");
+    expect(lines[3]).toContain("second");
+    expect(lines).toHaveLength(4);
+
+    const mekiriFiles = await fsp.readdir(path.join(projectDir, ".mekiri"), { recursive: true });
+    for (const f of mekiriFiles) {
+      const full = path.join(projectDir, ".mekiri", f as string);
+      if ((await fsp.stat(full)).isFile()) expect(await fsp.readFile(full, "utf8")).not.toContain("SECRET-KEY-123");
+    }
+  });
+
+  it("grafts a single prompt, a range, and a past session's prompts", async () => {
+    await writePrompts("s1", [{ text: "one" }, { text: "two" }, { text: "three" }]);
+    await writePrompts("old-session", [{ text: "old one" }]);
+    const handlers = handlersFor();
+
+    const single = await handlers.graft({ target: "user#2" });
+    expect(single).toMatchObject({ status: "ok", mode: "prompts" });
+    if (single.status !== "ok") throw new Error("unreachable");
+    expect(single.content).toMatch(/^\[user #2 · /);
+    expect(single.content).toContain("two");
+    expect(single.content).not.toContain("three");
+
+    const range = await handlers.graft({ target: "user#1-3" });
+    if (range.status !== "ok") throw new Error("unreachable");
+    expect(range.content.indexOf("one")).toBeLessThan(range.content.indexOf("three"));
+
+    const past = await handlers.graft({ target: "old-session:user#1" });
+    if (past.status !== "ok") throw new Error("unreachable");
+    expect(past.content).toContain("old one");
+  });
+
+  it("reports missing prompts and not_found for an empty result", async () => {
+    await writePrompts("s1", [{ text: "one" }]);
+    const handlers = handlersFor();
+    expect(await handlers.graft({ target: "user#1-3" })).toMatchObject({ status: "ok", missing_prompts: [2, 3] });
+    expect(await handlers.graft({ target: "user#9" })).toEqual({ status: "not_found" });
+  });
+
+  it("cuts an oversize range at whole prompts and says how to continue", async () => {
+    const big = "x".repeat(12000);
+    await writePrompts("s1", [{ text: big }, { text: big }, { text: big }]);
+    const result = await handlersFor().graft({ target: "user#1-3" });
+    expect(result).toMatchObject({ status: "ok", cut_prompts: [2, 3] });
+    if (result.status !== "ok" || result.mode !== "prompts") throw new Error("unreachable");
+    expect(result.hint).toContain('graft("user#2-3")');
+  });
+
+  it("returns image attachments separately from the text", async () => {
+    await writePrompts("s1", [{ text: "see screenshot", png: true }]);
+    const result = await handlersFor().graft({ target: "user#1" });
+    if (result.status !== "ok" || result.mode !== "prompts") throw new Error("unreachable");
+    expect(result.content).toContain("001-1.png");
+    expect(result.images).toEqual([{ prompt: 1, file: "001-1.png", mediaType: "image/png", data: PNG.toString("base64") }]);
+  });
+});
+

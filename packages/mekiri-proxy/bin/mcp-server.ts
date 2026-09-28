@@ -99,10 +99,26 @@ async function main() {
         "С target = rule_id -- дословный фрагмент исходного транскрипта той сессии (не пересказ), обёрнутый " +
         "метаданными восстановления (событие, сессия, время); может быть урезан по размеру (см. truncated в ответе). " +
         "Дистиллят того же rule_id уже лежит в report.md той сессии и доступен обычным чтением файла. Это чтение из " +
-        "собственного плоского архива на диске, а не из живой сессии -- переживает компактизацию по конструкции.",
-      inputSchema: { target: z.string().optional().describe("rule_id записи из оглавления (capsule.md) любой сессии. Без него возвращается оглавление текущей сессии.") },
+        "собственного плоского архива на диске, а не из живой сессии -- переживает компактизацию по конструкции. " +
+        "target = user#7 / user#7-10 / <sessionId>:user#7-10 -- дословные промпты пользователя (строки [user #N] " +
+        "в капсуле), с вложениями-картинками.",
+      inputSchema: { target: z.string().optional().describe("rule_id записи из оглавления (capsule.md) любой сессии, либо user#N / user#N-M / <sessionId>:user#N-M. Без него возвращается оглавление текущей сессии.") },
     },
-    async (args) => ({ content: [{ type: "text", text: JSON.stringify(await handlers.graft(args)) }] })
+    async (args) => {
+      const result = await handlers.graft(args);
+      // Prompt attachments: images go out as MCP image blocks (the agent sees
+      // them without a Read outside the project), not as base64 in the JSON.
+      if (result.status === "ok" && result.mode === "prompts" && result.images) {
+        const { images, ...rest } = result;
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(rest) },
+            ...images.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mediaType })),
+          ],
+        };
+      }
+      return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+    }
   );
 
   server.registerTool(

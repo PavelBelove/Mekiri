@@ -97,3 +97,14 @@ export interface CapsuleIndexEntry {
    *  before this field existed. */
   activityLog?: string;
 }
+
+/** A `capsule-index.jsonl` line recording that user prompt #n of a session
+ *  already has its `[user #n]` line in that session's capsule.md. Carries no
+ *  prompt text: the prompts themselves live outside the project (see
+ *  mekiri-proxy's promptLog.ts), since users paste secrets into them. */
+export interface PromptCapsuleEntry {
+  event: "prompt";
+  sessionId: string;
+  n: number;
+  timestamp: string;
+}

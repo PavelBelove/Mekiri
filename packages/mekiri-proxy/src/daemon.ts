@@ -7,6 +7,7 @@ import type { RewriteRule } from "./rewriteMessages.js";
 import { extractSessionId } from "./sessionMetadata.js";
 import { loadAllRules, appendRule } from "./ruleStore.js";
 import { appendNewShadowMessages } from "./shadowTranscript.js";
+import { logNewPrompts } from "./promptLog.js";
 
 export interface DaemonOptions {
   port: number;
@@ -75,7 +76,11 @@ export async function createDaemon(options: DaemonOptions): Promise<DaemonHandle
           // file (see shadowTranscript.ts). Archival failing must never break
           // the actual proxy request.
           if (sessionId) {
-            await appendNewShadowMessages(sessionId, parsed.messages).catch(() => {});
+            const mainThread = await appendNewShadowMessages(sessionId, parsed.messages).catch(() => false);
+            // After the shadow append: a first-seen session backfills its
+            // prompt log from the shadow archive (see promptLog.ts). Side
+            // requests sharing the session id carry no user prompts.
+            if (mainThread) await logNewPrompts(sessionId, parsed.messages).catch(() => {});
           }
           const sessionRules = sessionId ? rules.get(sessionId) : undefined;
           if (sessionRules && sessionRules.length > 0) {

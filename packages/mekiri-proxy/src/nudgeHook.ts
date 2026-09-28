@@ -44,6 +44,12 @@ export interface NudgeState {
    *  escape hatch (see isTraceOnlyPrune): using it so often it stops meaning
    *  anything, instead of ever finding a real cut boundary. */
   consecutiveTraceOnly: number;
+  /** Set by the Stop hook when it forces a prune at turn end; cleared by the
+   *  next Mekiri call. A trace-only prune made while it's set is a
+   *  continuity marker the owner explicitly wants (it keeps the report
+   *  sequential, one entry per turn), not avoidance -- so it neither counts
+   *  towards nor resets consecutiveTraceOnly. */
+  stopForcedPrune?: boolean;
 }
 
 /** Random integer in [MIN_THRESHOLD, MAX_THRESHOLD] -- a statistical stand-in
@@ -180,8 +186,9 @@ export function decideNudge(
   }
 
   if (isMekiriTool(toolName)) {
-    const consecutiveTraceOnly = isTraceOnlyPrune(toolName, toolInput)
-      ? (state.consecutiveTraceOnly ?? 0) + 1
+    const traceOnly = isTraceOnlyPrune(toolName, toolInput);
+    const consecutiveTraceOnly = traceOnly
+      ? (state.consecutiveTraceOnly ?? 0) + (state.stopForcedPrune ? 0 : 1)
       : 0;
     const nextState: NudgeState = {
       callsSinceReset: 0,
@@ -240,6 +247,7 @@ export function decideNudge(
       consecutiveIgnored,
       deferRemaining: 0,
       consecutiveTraceOnly: consecutiveTraceOnlySoFar,
+      ...(state.stopForcedPrune ? { stopForcedPrune: true } : {}),
     };
     if (consecutiveIgnored >= HARD_BLOCK_AFTER) {
       return { nextState, block: { reason: blockReason(consecutiveIgnored) } };
@@ -254,6 +262,7 @@ export function decideNudge(
       consecutiveIgnored: consecutiveIgnoredSoFar,
       deferRemaining: 0,
       consecutiveTraceOnly: consecutiveTraceOnlySoFar,
+      ...(state.stopForcedPrune ? { stopForcedPrune: true } : {}),
     },
   };
 }
