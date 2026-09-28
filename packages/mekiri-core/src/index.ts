@@ -23,7 +23,8 @@ export type {
 export { validateFruit } from "./fruitSchema.js";
 export type { ValidateFruitArgs, ValidateFruitResult } from "./fruitSchema.js";
 export { findLastCompactBoundaryIndex } from "./compactZone.js";
-export { findBoundary } from "./quoteMatcher.js";
+export { findBoundary, contentContainsQuote } from "./quoteMatcher.js";
+export type { QuoteScope } from "./quoteMatcher.js";
 export { resolveBoundaryWithRetry } from "./resolveBoundary.js";
 export type { ResolveBoundaryOptions, ResolveBoundaryResult } from "./resolveBoundary.js";
 export { MekiriConfigSchema, defaultConfig } from "./configSchema.js";

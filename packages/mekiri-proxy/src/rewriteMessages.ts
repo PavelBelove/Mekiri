@@ -11,6 +11,8 @@ export interface RewriteRule {
   preserveFromQuote?: string;
 }
 
+import { contentContainsQuote } from "mekiri-core";
+import type { QuoteScope } from "mekiri-core";
 import { applyReset, isResetRule } from "./contextReset.js";
 import type { ResetRule } from "./contextReset.js";
 
@@ -33,23 +35,19 @@ function asMessage(m: unknown): MessageShape {
 // role:"system" injections and merged thinking+tool_use pairs both cause
 // the arrays to diverge), so we content-match against the real array
 // instead of trusting a precomputed guess.
-function findAssistantTextIndex(messages: unknown[], quote: string): number | undefined {
+function findAssistantIndex(messages: unknown[], quote: string, scope: QuoteScope): number | undefined {
   for (let i = 0; i < messages.length; i++) {
     const m = asMessage(messages[i]);
-    if (m.role !== "assistant") continue;
-    const content = m.content;
-    if (!Array.isArray(content)) continue;
-    const hit = content.some(
-      (block) =>
-        typeof block === "object" &&
-        block !== null &&
-        (block as { type?: string }).type === "text" &&
-        typeof (block as { text?: unknown }).text === "string" &&
-        (block as { text: string }).text.includes(quote)
-    );
-    if (hit) return i;
+    if (m.role === "assistant" && contentContainsQuote(m.content, quote, scope)) return i;
   }
   return undefined;
+}
+
+// Text first, then tool-call inputs -- the same order as mekiri-core's
+// findBoundary, which validated this quote (see contentContainsQuote for why
+// a quote can live only in a tool call's input).
+function findAssistantTextIndex(messages: unknown[], quote: string): number | undefined {
+  return findAssistantIndex(messages, quote, "text") ?? findAssistantIndex(messages, quote, "tool_input");
 }
 
 // Same matching predicate as findAssistantTextIndex, but searches backward
@@ -57,23 +55,24 @@ function findAssistantTextIndex(messages: unknown[], quote: string): number | un
 // forward from the start of the array. Forward search would risk matching an
 // older, coincidentally-similar assistant message deeper in history instead
 // of the report that was actually just written for this specific prune call.
-function findLastAssistantTextIndexBefore(messages: unknown[], quote: string, beforeIndex: number): number | undefined {
+function findLastAssistantIndexBefore(
+  messages: unknown[],
+  quote: string,
+  beforeIndex: number,
+  scope: QuoteScope,
+): number | undefined {
   for (let i = beforeIndex - 1; i >= 0; i--) {
     const m = asMessage(messages[i]);
-    if (m.role !== "assistant") continue;
-    const content = m.content;
-    if (!Array.isArray(content)) continue;
-    const hit = content.some(
-      (block) =>
-        typeof block === "object" &&
-        block !== null &&
-        (block as { type?: string }).type === "text" &&
-        typeof (block as { text?: unknown }).text === "string" &&
-        (block as { text: string }).text.includes(quote)
-    );
-    if (hit) return i;
+    if (m.role === "assistant" && contentContainsQuote(m.content, quote, scope)) return i;
   }
   return undefined;
+}
+
+function findLastAssistantTextIndexBefore(messages: unknown[], quote: string, beforeIndex: number): number | undefined {
+  return (
+    findLastAssistantIndexBefore(messages, quote, beforeIndex, "text") ??
+    findLastAssistantIndexBefore(messages, quote, beforeIndex, "tool_input")
+  );
 }
 
 function getToolUseBlocks(message: unknown): { id: string; name: string }[] {
