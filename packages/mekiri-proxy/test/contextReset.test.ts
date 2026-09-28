@@ -132,6 +132,17 @@ describe("contextReset", () => {
       ]);
     });
 
+    it("keeps its tail anchored when an identical message repeats later", async () => {
+      const { createResetRule, applyReset } = await import("../src/contextReset.js");
+      const stop = () => user("Stop hook feedback: call prune");
+      const messages = [user("p0"), reply(big(40_000)), stop(), reply("r1"), user("p2"), reply("r2")];
+      const rule = await createResetRule({ sessionId: "s", messages, excluded: new Set(), resetRules: [], settings: { ...settings, tailTurns: 2 }, estimate: 1000 });
+      expect(rule?.keepFromOccurrence).toBe(0);
+      const later = [...messages, stop(), reply("r3")];
+      // The tail still starts at the first Stop-hook message, not the newer copy.
+      expect(applyReset(later, new Set(), rule!).slice(1)).toEqual(later.slice(3));
+    });
+
     it("composes with prune cuts through rewriteMessages, the latest reset winning", async () => {
       const { normalizedHash } = await import("../src/contextReset.js");
       const { rewriteMessages } = await import("../src/rewriteMessages.js");
@@ -186,6 +197,20 @@ describe("contextReset", () => {
       expect(rule!.instruction).toContain("mekiri-warmup");
       expect(rule!.instruction).toContain(`graft("${rule!.id}")`);
       expect(rule!.instruction).toContain("This session's capsule.md:\n«[auto-reset]");
+    });
+
+    it("counts only what this reset drops, not the prefix an earlier reset took", async () => {
+      const { createResetRule, normalizedHash } = await import("../src/contextReset.js");
+      const { appendNewShadowMessages } = await import("../src/shadowTranscript.js");
+      const turn = (i: number, out = "ok") => [user(`p${i}`), call(`t${i}`), result(`t${i}`, out), reply(`r${i}`)];
+      const messages = [...turn(0), ...turn(1), ...turn(2, big(40_000)), ...turn(3), ...turn(4), ...turn(5)];
+      await appendNewShadowMessages("s", messages);
+      const earlier = { id: "e", kind: "reset" as const, keepFromHash: normalizedHash(messages[8]), instruction: "e", createdAt: "t" };
+      const rule = await createResetRule({ sessionId: "s", dir: projectDir, messages, excluded: new Set(), resetRules: [earlier], settings: { ...settings, tailTurns: 2 }, estimate: 150_000 });
+      expect(rule).not.toBeNull();
+      const capsule = readFileSync(path.join(projectDir, ".mekiri", "sessions", "s", "capsule.md"), "utf8");
+      // Tail = last 2 turns (index 16 on); this reset drops indices 8..15.
+      expect(capsule).toContain("; 8 unarchived messages dropped");
     });
 
     it("declines a reset that would free little room, so it can't fire on every request", async () => {
