@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
 import { readCapsule, recordDistillate } from "mekiri-core";
 import { recognizePrompt } from "./promptLog.js";
 import { readShadowTranscriptOrNull } from "./shadowTranscript.js";
@@ -251,10 +252,12 @@ export function buildInstruction(args: {
   capsule?: string;
   recordRuleId?: string;
   hasLibrary: boolean;
+  /** This session's report.md, where the dropped prune distillates live. */
+  reportPath?: string;
 }): string {
   const parts = [
     `[Mekiri context reset] This session reached ~${Math.round(args.estimate / 1000)}k tokens. Instead of Claude Code's auto-compaction, Mekiri dropped the middle of the conversation mechanically. Only the tail is kept verbatim (it follows this message); nothing is lost -- the earlier work is in this session's Mekiri library.`,
-    "Before doing anything else, warm up with the `mekiri-warmup` skill. Then continue the task the last user prompt asked for, from where the tail shows it stopped: don't redo what the capsule and tail show as finished, and don't drop what isn't finished yet.",
+    `Before doing anything else, warm up with the \`mekiri-warmup\` skill (its "After a Mekiri context reset" section)${args.reportPath ? `: start with the last entries of ${args.reportPath} -- the newest kept_context notes are the current task's state` : ""}. Then continue the task the last user prompt asked for, from where the tail shows it stopped: don't redo what the capsule and tail show as finished, and don't drop what isn't finished yet.`,
   ];
   if (args.hasLibrary) {
     parts.push(
@@ -359,6 +362,7 @@ export async function createResetRule(args: CreateResetArgs): Promise<ResetRule 
       capsule,
       recordRuleId,
       hasLibrary: args.dir !== undefined && capsule !== undefined && capsule.trim() !== "",
+      reportPath: args.dir ? path.join(args.dir, ".mekiri", "sessions", args.sessionId, "report.md") : undefined,
     }),
     createdAt: timestamp,
   };
