@@ -955,5 +955,15 @@ describe("user prompts: capsule lines and graft", () => {
     expect(result.content).toContain("001-1.png");
     expect(result.images).toEqual([{ prompt: 1, file: "001-1.png", mediaType: "image/png", data: PNG.toString("base64") }]);
   });
+
+  it("counts inlined images against the size limit and lists the rest by path", async () => {
+    await writePrompts("s1", Array.from({ length: 6 }, (_, i) => ({ text: `shot ${i + 1}`, png: true })));
+    const result = await handlersFor().graft({ target: "user#1-6" });
+    if (result.status !== "ok" || result.mode !== "prompts") throw new Error("unreachable");
+    // 20000 chars at 5000 per image: at most 4 inlined, the rest by path.
+    expect(result.images!.length).toBeLessThanOrEqual(4);
+    expect(result.content).toContain("shot 6");
+    expect(result.content).toMatch(/attachment 006-1\.png: image\/png, \d+ bytes -- /);
+  });
 });
 

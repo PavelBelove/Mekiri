@@ -167,6 +167,11 @@ export interface GraftImage {
 
 // Images above this are listed by path instead of inlined.
 const GRAFT_IMAGE_BYTE_LIMIT = 5 * 1024 * 1024;
+// An inlined image costs the caller ~1600 tokens whatever its byte size (the
+// same flat estimate contextReset uses); it counts against
+// RAW_CONTENT_CHAR_LIMIT at this many chars, so a range of screenshot-heavy
+// prompts can't bypass the limit. Images past the budget are listed by path.
+const GRAFT_IMAGE_CHAR_COST = 5000;
 
 type GraftResult =
   | { status: "ok"; mode: "toc"; content: string }
@@ -462,7 +467,10 @@ export function createToolHandlers(context: McpServerContext) {
           const attachmentLines: string[] = [];
           const promptImages: GraftImage[] = [];
           for (const a of prompt.attachments) {
-            if (a.mediaType.startsWith("image/") && a.bytes <= GRAFT_IMAGE_BYTE_LIMIT) {
+            const imageFits =
+              (blocks.length === 0 && promptImages.length === 0) ||
+              used + (promptImages.length + 1) * GRAFT_IMAGE_CHAR_COST <= RAW_CONTENT_CHAR_LIMIT;
+            if (a.mediaType.startsWith("image/") && a.bytes <= GRAFT_IMAGE_BYTE_LIMIT && imageFits) {
               const data = await fs.readFile(a.path).catch(() => null);
               if (data) {
                 promptImages.push({ prompt: n, file: a.file, mediaType: a.mediaType, data: data.toString("base64") });
@@ -487,7 +495,7 @@ export function createToolHandlers(context: McpServerContext) {
           }
           blocks.push(block);
           images.push(...promptImages);
-          used += block.length;
+          used += block.length + promptImages.length * GRAFT_IMAGE_CHAR_COST;
         }
         if (blocks.length === 0) return { status: "not_found" };
         const content = blocks.join("\n\n");
