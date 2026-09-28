@@ -204,6 +204,23 @@ describe("shadowTranscript", () => {
     expect(transcript[3].message?.content).toEqual(edited);
   });
 
+  it("writes no revision line when only cache_control moved or a text block collapsed to a string", async () => {
+    const { appendNewShadowMessages, readShadowTranscript } = await import("../src/shadowTranscript.js");
+    const hook = "PostToolUse hook additional context: call prune";
+    await appendNewShadowMessages("reserialized-session", [
+      { role: "user", content: "a" },
+      { role: "user", content: [{ type: "text", text: hook, cache_control: { type: "ephemeral" } }] },
+    ]);
+    await appendNewShadowMessages("reserialized-session", [
+      { role: "user", content: "a" },
+      { role: "user", content: hook },
+      { role: "assistant", content: "b" },
+    ]);
+    const transcript = await readShadowTranscript("reserialized-session");
+    expect(transcript).toHaveLength(3);
+    expect(transcript.some((l) => l.revision)).toBe(false);
+  });
+
   it("archives an edited previous-last message before the new tail when the array also grew", async () => {
     const { appendNewShadowMessages, readShadowTranscript } = await import("../src/shadowTranscript.js");
     await appendNewShadowMessages("grow-edit-session", [

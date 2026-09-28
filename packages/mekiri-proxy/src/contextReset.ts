@@ -1,8 +1,11 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { readCapsule, recordDistillate } from "mekiri-core";
 import { recognizePrompt } from "./promptLog.js";
+import { normalizedHash, stripCacheControl } from "./messageHash.js";
 import { readShadowTranscriptOrNull } from "./shadowTranscript.js";
+
+export { normalizedHash };
 
 // Mekiri's replacement for Claude Code's auto-compaction -- see
 // docs/specs/2026-09-28-context-reset.md and docs/mechanics/context-reset.md.
@@ -66,27 +69,6 @@ export function isResetRule(rule: unknown): rule is ResetRule {
 
 // ---------------------------------------------------------------------------
 // Hashing and size estimate
-
-/** Claude Code moves cache_control markers between requests; strip them so a
- *  message hashes the same wherever it sits in the history. */
-function stripCacheControl(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripCacheControl);
-  if (typeof value === "object" && value !== null) {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) {
-      if (k !== "cache_control") out[k] = stripCacheControl(v);
-    }
-    return out;
-  }
-  return value;
-}
-
-export function normalizedHash(message: unknown): string {
-  const m = asMessage(message);
-  return createHash("sha256")
-    .update(JSON.stringify(stripCacheControl({ role: m.role, content: m.content })))
-    .digest("hex");
-}
 
 const IMAGE_TOKENS = 1600;
 

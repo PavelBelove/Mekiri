@@ -143,6 +143,14 @@ describe("contextReset", () => {
       expect(applyReset(later, new Set(), rule!).slice(1)).toEqual(later.slice(3));
     });
 
+    it("finds its tail after Claude Code collapses a one-block message to a string", async () => {
+      const { applyReset, normalizedHash } = await import("../src/contextReset.js");
+      const messages = [user("p0"), reply("r0"), { role: "user", content: [{ type: "text", text: "p1", cache_control: { type: "ephemeral" } }] }, reply("r1")];
+      const rule = { id: "r", kind: "reset" as const, keepFromHash: normalizedHash(messages[2]), keepFromOccurrence: 0, instruction: "I", createdAt: "t" };
+      const later = [messages[0], messages[1], { role: "user", content: "p1" }, messages[3]];
+      expect(applyReset(later, new Set(), rule)).toEqual([{ role: "user", content: [{ type: "text", text: "I" }, { type: "text", text: "p1" }] }, messages[3]]);
+    });
+
     it("composes with prune cuts through rewriteMessages, the latest reset winning", async () => {
       const { normalizedHash } = await import("../src/contextReset.js");
       const { rewriteMessages } = await import("../src/rewriteMessages.js");
