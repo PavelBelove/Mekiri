@@ -226,5 +226,32 @@ describe("promptLog", () => {
         [2, 2, true, true],
       ]);
     });
+
+    it("skips whole-thread re-copies left in pre-gate archives, keeping genuine repeats", async () => {
+      // Shape seen in a1ed4f55's archive: a classifier side request was
+      // archived as a "new thread", then the main thread was re-copied whole.
+      const reply = (s: string) => ({ role: "assistant", content: [{ type: "text", text: s }] });
+      const thread = [
+        { role: "user", content: "go" },
+        reply("a1"),
+        { role: "user", content: "ok, go on" },
+        reply("a2"),
+        { role: "user", content: "ok, go on" },
+      ];
+      const sideRequest = [
+        { role: "user", content: "The following is the user's CLAUDE.md configuration." },
+        { role: "user", content: [{ type: "text", text: "<transcript>\n" }] },
+      ];
+      const lines = [...thread, ...sideRequest, ...thread, reply("a3"), { role: "user", content: "next" }];
+      const file = path.join(stateDir, "raw-transcripts", "s.jsonl");
+      const { mkdirSync, writeFileSync } = await import("node:fs");
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, lines.map((message, i) => JSON.stringify({ type: message.role, uuid: `u${i}`, message })).join("\n") + "\n");
+
+      const { logNewPrompts, readPromptIndex } = await import("../src/promptLog.js");
+      await logNewPrompts("s", [...thread, reply("a3"), { role: "user", content: "next" }]);
+      const index = await readPromptIndex("s");
+      expect(index.map((m) => m.messageIndex)).toEqual([0, 2, 4, 13]);
+    });
   });
 });

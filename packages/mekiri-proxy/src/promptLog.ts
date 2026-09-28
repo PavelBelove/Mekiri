@@ -99,10 +99,14 @@ function toBlocks(content: unknown): WireBlock[] {
   return [];
 }
 
+function isSideRequestMessage(message: { role?: string; content?: unknown }): boolean {
+  const firstText = toBlocks(message.content).find((b) => b.type === "text")?.text?.trim() ?? "";
+  return message.role === "user" && SIDE_REQUEST_PREFIXES.some((p) => firstText.startsWith(p));
+}
+
 export function recognizePrompt(message: { role?: string; content?: unknown }): RecognizedPrompt | null {
   if (message.role !== "user") return null;
-  const firstText = toBlocks(message.content).find((b) => b.type === "text")?.text?.trim() ?? "";
-  if (SIDE_REQUEST_PREFIXES.some((p) => firstText.startsWith(p))) return null;
+  if (isSideRequestMessage(message)) return null;
   const blocks: WireBlock[] = [];
   let interrupted = false;
   let ideOpenedFile: string | undefined;
@@ -307,6 +311,13 @@ async function backfillFromShadow(sessionId: string, state: SessionState): Promi
   // Wire index of each shadow line: non-revision lines count up; a revision
   // line re-uses the index of the line it revises.
   const indexByUuid = new Map<string, number>();
+  // Archives written before the side-request gate hold whole-thread re-copies
+  // at ever-growing indices, which the per-index dedup can't see. A copy sits
+  // after the same message as its original; a genuine repeat ("ok, go on")
+  // follows a different reply -- so dedup on (previous message, message),
+  // with an archived side request resetting "previous" like a file start.
+  const seenPairs = new Set<string>();
+  let previous = "";
   let next = 0;
   for (const line of shadow as RawLine[]) {
     let idx: number;
@@ -316,7 +327,17 @@ async function backfillFromShadow(sessionId: string, state: SessionState): Promi
       idx = next++;
       if (line.uuid) indexByUuid.set(line.uuid, idx);
     }
-    if (line.message) await logOne(sessionId, state, line.message, idx, true);
+    if (!line.message) continue;
+    if (isSideRequestMessage(line.message)) {
+      previous = "";
+      continue;
+    }
+    const current = JSON.stringify(line.message);
+    const pair = sha256(previous + "\0" + current);
+    previous = current;
+    if (seenPairs.has(pair)) continue;
+    seenPairs.add(pair);
+    await logOne(sessionId, state, line.message, idx, true);
   }
 }
 
