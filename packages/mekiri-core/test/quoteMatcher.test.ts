@@ -55,6 +55,23 @@ describe("findBoundary", () => {
     expect(result).toEqual({ status: "not_found" });
   });
 
+  it("finds a quote in the stretch a mid-turn compaction kept verbatim, though it sits before the summary on disk", () => {
+    const u1 = userLine(null, "start");
+    const old = assistantLine(u1.uuid!, "Compacted away for good.");
+    const kept = assistantLine(old.uuid!, "Writing the docs now, mid-turn.");
+    const { summary } = compactPair(kept.uuid!);
+    // Real compact_boundary lines carry the preserved uuids (Claude Code 2.1.x).
+    const system: RawLine = {
+      type: "system",
+      subtype: "compact_boundary",
+      compactMetadata: { trigger: "auto", preservedMessages: { anchorUuid: summary.uuid, uuids: [kept.uuid], allUuids: [kept.uuid] } },
+    };
+    const lines: RawLine[] = [u1, old, kept, system, summary];
+
+    expect(findBoundary(lines, "Writing the docs now")).toEqual({ status: "ok", messageId: kept.uuid });
+    expect(findBoundary(lines, "Compacted away")).toEqual({ status: "in_compacted_zone", lastCompactMessageId: summary.uuid });
+  });
+
   it("returns in_compacted_zone when the quote only exists before the last compact boundary", () => {
     const u1 = userLine(null, "start");
     const a1 = assistantLine(u1.uuid!, "This sentence lives before the compaction event.");

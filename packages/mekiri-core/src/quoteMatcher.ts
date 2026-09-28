@@ -1,5 +1,5 @@
 import type { BoundaryResult, RawLine } from "./types.js";
-import { findLastCompactBoundaryIndex } from "./compactZone.js";
+import { findLastCompactBoundaryIndex, preservedUuidsOfLastCompaction } from "./compactZone.js";
 
 function messageContainsQuote(line: RawLine, quote: string): boolean {
   if (line.type !== "assistant" || line.isSidechain) return false;
@@ -11,11 +11,15 @@ function messageContainsQuote(line: RawLine, quote: string): boolean {
 export function findBoundary(lines: RawLine[], quote: string): BoundaryResult {
   const boundaryIdx = findLastCompactBoundaryIndex(lines);
   const searchStart = boundaryIdx + 1;
+  // The verbatim stretch a mid-turn compaction kept is live, though it sits
+  // before the summary on disk.
+  const preserved = boundaryIdx >= 0 ? preservedUuidsOfLastCompaction(lines) : new Set<string>();
+  const isLive = (i: number) => i >= searchStart || (lines[i].uuid !== undefined && preserved.has(lines[i].uuid!));
 
   const matches: string[] = [];
-  for (let i = searchStart; i < lines.length; i++) {
+  for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (messageContainsQuote(line, quote) && line.uuid) {
+    if (isLive(i) && messageContainsQuote(line, quote) && line.uuid) {
       matches.push(line.uuid);
     }
   }
@@ -29,7 +33,7 @@ export function findBoundary(lines: RawLine[], quote: string): BoundaryResult {
 
   if (boundaryIdx >= 0) {
     for (let i = 0; i < searchStart; i++) {
-      if (messageContainsQuote(lines[i], quote)) {
+      if (!isLive(i) && messageContainsQuote(lines[i], quote)) {
         return { status: "in_compacted_zone", lastCompactMessageId: lines[boundaryIdx].uuid ?? "" };
       }
     }
