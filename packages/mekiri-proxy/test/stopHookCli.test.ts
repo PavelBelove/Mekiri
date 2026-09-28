@@ -84,7 +84,7 @@ describe("stop-hook CLI", () => {
     expect(stdout).toBe("");
   });
 
-  it("preserves existing nudge state untouched while setting stopBoundary", async () => {
+  it("preserves existing nudge counters while setting stopBoundary and flagging the forced prune", async () => {
     workDir = await fs.mkdtemp(path.join(tmpdir(), "stop-hook-test-"));
     const sessionId = "session-preserve-nudge";
     const configPath = path.join(workDir, ".mekiri", "config.json");
@@ -101,7 +101,7 @@ describe("stop-hook CLI", () => {
 
     expect(exitCode).toBe(0);
     const state = JSON.parse(await fs.readFile(statePath, "utf8"));
-    expect(state.nudge).toEqual({ callsSinceReset: 3, threshold: 7 });
+    expect(state.nudge).toEqual({ callsSinceReset: 3, threshold: 7, stopForcedPrune: true });
     expect(state.stopBoundary.lastAssistantMessage).toBe("report");
   });
 

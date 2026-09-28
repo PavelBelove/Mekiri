@@ -67,7 +67,9 @@ export interface CapsuleIndexEntry {
   header: string;
   startLine: number;
   endLine: number;
-  event: "prune";
+  /** "auto-reset": written by mekiri-proxy itself when it reset the context
+   *  near the limit, covering the not-yet-archived stretch it dropped. */
+  event: "prune" | "auto-reset";
   /** Which halves of the merged `prune` call actually fired: "kept" (the
    *  archive-only, former `tag` half -- nothing removed from live context)
    *  and/or "cut" (context actually removed and replaced by a distillate). */
@@ -96,4 +98,15 @@ export interface CapsuleIndexEntry {
    *  "" when the range had no tool_use blocks, absent on entries written
    *  before this field existed. */
   activityLog?: string;
+}
+
+/** A `capsule-index.jsonl` line recording that user prompt #n of a session
+ *  already has its `[user #n]` line in that session's capsule.md. Carries no
+ *  prompt text: the prompts themselves live outside the project (see
+ *  mekiri-proxy's promptLog.ts), since users paste secrets into them. */
+export interface PromptCapsuleEntry {
+  event: "prompt";
+  sessionId: string;
+  n: number;
+  timestamp: string;
 }

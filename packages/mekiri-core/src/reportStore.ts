@@ -1,12 +1,20 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { NoteType, RawLine } from "./types.js";
-import type { CapsuleIndexEntry } from "./types.js";
+import type { CapsuleIndexEntry, PromptCapsuleEntry } from "./types.js";
 import { summarizeToolActivity } from "./verifyFruitEvidence.js";
 
 const CAPSULE_INDEX_RELATIVE_PATH = path.join(".mekiri", "capsule-index.jsonl");
 const SESSIONS_INDEX_RELATIVE_PATH = path.join(".mekiri", "sessions-index.md");
 const ALIAS_MARKER_FILENAME = ".alias";
+
+/** Parses capsule-index.jsonl, keeping only distillate entries -- prompt
+ *  bookkeeping lines (event "prompt") have no header/ruleId/ranges. */
+function parseDistillateEntries(raw: string): CapsuleIndexEntry[] {
+  return splitLines(raw)
+    .map((line) => JSON.parse(line) as CapsuleIndexEntry | PromptCapsuleEntry)
+    .filter((e): e is CapsuleIndexEntry => e.event !== "prompt");
+}
 
 function sessionsDirPath(dir: string): string {
   return path.join(dir, ".mekiri", "sessions");
@@ -84,7 +92,7 @@ export async function ensureSessionAlias(dir: string, sessionId: string, header:
 export async function writeSessionsIndex(dir: string): Promise<void> {
   const indexPath = path.join(dir, CAPSULE_INDEX_RELATIVE_PATH);
   const raw = await readFileIfExists(indexPath);
-  const entries = splitLines(raw).map((line) => JSON.parse(line) as CapsuleIndexEntry);
+  const entries = parseDistillateEntries(raw);
 
   const bySession = new Map<string, CapsuleIndexEntry[]>();
   for (const entry of entries) {
@@ -128,7 +136,7 @@ export async function writeSessionsIndex(dir: string): Promise<void> {
 }
 
 export interface ReportEntryMeta {
-  event: "prune";
+  event: "prune" | "auto-reset";
   sessionId: string;
   ruleId: string;
   noteType: NoteType;
@@ -240,8 +248,7 @@ export async function recordDistillate(
       // points into Claude Code's own (unreliable) .jsonl line count, which
       // has no relationship to the shadow transcript's own message count.
       // Chaining onto it would silently reproduce the original bug.
-      const priorRawEnds = splitLines(existingIndexRaw)
-        .map((line) => JSON.parse(line) as CapsuleIndexEntry)
+      const priorRawEnds = parseDistillateEntries(existingIndexRaw)
         .filter((e) => e.sessionId === meta.sessionId && e.rawEndLine !== undefined && e.rawSource === meta.rawSource)
         .map((e) => e.rawEndLine as number);
       rawStartLine = priorRawEnds.length > 0 ? Math.max(...priorRawEnds) + 1 : 1;
@@ -325,9 +332,39 @@ export async function readCapsule(dir: string, sessionId: string): Promise<strin
 export async function findCapsuleEntry(dir: string, ruleId: string): Promise<CapsuleIndexEntry | undefined> {
   const indexPath = path.join(dir, CAPSULE_INDEX_RELATIVE_PATH);
   const raw = await readFileIfExists(indexPath);
-  for (const line of splitLines(raw)) {
-    const entry = JSON.parse(line) as CapsuleIndexEntry;
-    if (entry.ruleId === ruleId) return entry;
-  }
-  return undefined;
+  return parseDistillateEntries(raw).find((entry) => entry.ruleId === ruleId);
+}
+
+export interface PromptLine {
+  n: number;
+  /** The capsule.md line, without trailing newline -- formatted by the
+   *  caller, which owns the prompt metadata. Must not contain prompt text. */
+  line: string;
+}
+
+/** Appends a capsule.md line for every prompt of `sessionId` not yet
+ *  recorded in capsule-index.jsonl, in `n` order, and records each as an
+ *  event "prompt" index entry so it is never written twice. Returns the
+ *  numbers actually written. */
+export async function recordPromptLines(dir: string, sessionId: string, prompts: PromptLine[]): Promise<number[]> {
+  if (prompts.length === 0) return [];
+  return withDirMutex(dir, async () => {
+    const indexPath = path.join(dir, CAPSULE_INDEX_RELATIVE_PATH);
+    const recorded = new Set(
+      splitLines(await readFileIfExists(indexPath))
+        .map((line) => JSON.parse(line) as CapsuleIndexEntry | PromptCapsuleEntry)
+        .filter((e): e is PromptCapsuleEntry => e.event === "prompt" && e.sessionId === sessionId)
+        .map((e) => e.n),
+    );
+    const fresh = [...prompts].sort((a, b) => a.n - b.n).filter((p) => !recorded.has(p.n));
+    if (fresh.length === 0) return [];
+
+    const capsulePath = sessionCapsulePath(dir, sessionId);
+    await fs.mkdir(path.dirname(capsulePath), { recursive: true });
+    await fs.appendFile(capsulePath, fresh.map((p) => p.line + "\n").join(""), "utf8");
+    const timestamp = new Date().toISOString();
+    const entries = fresh.map((p): PromptCapsuleEntry => ({ event: "prompt", sessionId, n: p.n, timestamp }));
+    await fs.appendFile(indexPath, entries.map((e) => JSON.stringify(e) + "\n").join(""), "utf8");
+    return fresh.map((p) => p.n);
+  });
 }

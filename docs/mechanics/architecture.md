@@ -34,9 +34,11 @@ The agent doesn't see internal message ids, but it does see its own text. The bo
 - Exact unique match → boundary found, cut inclusive.
 - Zero matches → `not_found`, ask to copy verbatim.
 - More than one → `ambiguous`, ask for a longer or different quote.
-- Quote is in an already-compacted zone → `in_compacted_zone`.
+- Quote is in an already-compacted zone → `in_compacted_zone`. The stretch a mid-turn auto-compaction kept verbatim (on disk it sits *before* the summary; `compact_boundary`'s `compactMetadata.preservedMessages` marks it) counts as live, not compacted.
 
 No "take the last occurrence" heuristics — a silent cut in the wrong place is worse than an explicit error.
+
+Where a quote is looked for: the text blocks of messages first; only when the text has no match anywhere, the string inputs of tool calls (a Bash `description`, an `Edit`'s `new_string`), Mekiri's own calls excluded — every past `prune` carries its own quote. The fallback exists because Claude Code drops a text block written between two thinking blocks (thinking → text → thinking → tool_use) both from its `.jsonl` and from the history it resends, so such a sentence can't be found anywhere; the `not_found` hint says so and suggests quoting a tool call's description or the turn's final report instead. The on-disk check (`findBoundary`) and the wire-side cut share one matcher (`contentContainsQuote` in `mekiri-core`), so a quote `prune` accepted is always found when the cut is applied.
 
 ## Guaranteeing the tail: the `Stop` hook and `preserveFromQuote`
 
@@ -50,7 +52,7 @@ A `stop_hook_active` loop guard (set by the platform on any turn that's already 
 
 ## Interaction with auto-compaction
 
-The compacted part of the context is already a distillate; rolling back "into" it is pointless (there's nothing to clean there) and technically dangerous (quotes from consumed turns won't be found). The rollback zone is only the raw turns after the last compaction. Auto-compaction isn't disabled: it stays as an emergency valve, rollbacks just demote it from routine to a rare event.
+The compacted part of the context is already a distillate; rolling back "into" it is pointless (there's nothing to clean there) and technically dangerous (quotes from consumed turns won't be found). The rollback zone is only the raw turns after the last compaction. Auto-compaction isn't disabled: it stays as an emergency valve, rollbacks just demote it from routine to a rare event. With the opt-in context reset ([context-reset.md](context-reset.md)) the proxy handles the limit itself, and Claude Code's own compaction only fires if Mekiri is down.
 
 ## The daemon is one process per machine, by design
 

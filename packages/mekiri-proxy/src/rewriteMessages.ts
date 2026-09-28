@@ -11,6 +11,14 @@ export interface RewriteRule {
   preserveFromQuote?: string;
 }
 
+import { contentContainsQuote } from "mekiri-core";
+import type { QuoteScope } from "mekiri-core";
+import { applyReset, isResetRule } from "./contextReset.js";
+import type { ResetRule } from "./contextReset.js";
+
+/** Everything stored per session in rules.json: prune cuts and context resets. */
+export type SessionRule = RewriteRule | ResetRule;
+
 interface MessageShape {
   role?: string;
   content?: unknown;
@@ -27,23 +35,19 @@ function asMessage(m: unknown): MessageShape {
 // role:"system" injections and merged thinking+tool_use pairs both cause
 // the arrays to diverge), so we content-match against the real array
 // instead of trusting a precomputed guess.
-function findAssistantTextIndex(messages: unknown[], quote: string): number | undefined {
+function findAssistantIndex(messages: unknown[], quote: string, scope: QuoteScope): number | undefined {
   for (let i = 0; i < messages.length; i++) {
     const m = asMessage(messages[i]);
-    if (m.role !== "assistant") continue;
-    const content = m.content;
-    if (!Array.isArray(content)) continue;
-    const hit = content.some(
-      (block) =>
-        typeof block === "object" &&
-        block !== null &&
-        (block as { type?: string }).type === "text" &&
-        typeof (block as { text?: unknown }).text === "string" &&
-        (block as { text: string }).text.includes(quote)
-    );
-    if (hit) return i;
+    if (m.role === "assistant" && contentContainsQuote(m.content, quote, scope)) return i;
   }
   return undefined;
+}
+
+// Text first, then tool-call inputs -- the same order as mekiri-core's
+// findBoundary, which validated this quote (see contentContainsQuote for why
+// a quote can live only in a tool call's input).
+function findAssistantTextIndex(messages: unknown[], quote: string): number | undefined {
+  return findAssistantIndex(messages, quote, "text") ?? findAssistantIndex(messages, quote, "tool_input");
 }
 
 // Same matching predicate as findAssistantTextIndex, but searches backward
@@ -51,23 +55,24 @@ function findAssistantTextIndex(messages: unknown[], quote: string): number | un
 // forward from the start of the array. Forward search would risk matching an
 // older, coincidentally-similar assistant message deeper in history instead
 // of the report that was actually just written for this specific prune call.
-function findLastAssistantTextIndexBefore(messages: unknown[], quote: string, beforeIndex: number): number | undefined {
+function findLastAssistantIndexBefore(
+  messages: unknown[],
+  quote: string,
+  beforeIndex: number,
+  scope: QuoteScope,
+): number | undefined {
   for (let i = beforeIndex - 1; i >= 0; i--) {
     const m = asMessage(messages[i]);
-    if (m.role !== "assistant") continue;
-    const content = m.content;
-    if (!Array.isArray(content)) continue;
-    const hit = content.some(
-      (block) =>
-        typeof block === "object" &&
-        block !== null &&
-        (block as { type?: string }).type === "text" &&
-        typeof (block as { text?: unknown }).text === "string" &&
-        (block as { text: string }).text.includes(quote)
-    );
-    if (hit) return i;
+    if (m.role === "assistant" && contentContainsQuote(m.content, quote, scope)) return i;
   }
   return undefined;
+}
+
+function findLastAssistantTextIndexBefore(messages: unknown[], quote: string, beforeIndex: number): number | undefined {
+  return (
+    findLastAssistantIndexBefore(messages, quote, beforeIndex, "text") ??
+    findLastAssistantIndexBefore(messages, quote, beforeIndex, "tool_input")
+  );
 }
 
 function getToolUseBlocks(message: unknown): { id: string; name: string }[] {
@@ -152,13 +157,23 @@ function resolveRanges(messages: unknown[], rules: RewriteRule[]): ResolvedRange
   return ranges;
 }
 
-export function rewriteMessages(messages: unknown[], rules: RewriteRule[] | undefined): unknown[] {
-  if (!rules || rules.length === 0) return messages;
-  const ranges = resolveRanges(messages, rules);
-  if (ranges.length === 0) return messages;
+/** Indices of `messages` removed by the prune rules among `rules`. */
+export function computeExcluded(messages: unknown[], rules: SessionRule[]): Set<number> {
+  const pruneRules = rules.filter((r): r is RewriteRule => !isResetRule(r));
   const excluded = new Set<number>();
-  for (const range of ranges) {
+  for (const range of resolveRanges(messages, pruneRules)) {
     for (let i = range.start; i < range.end; i++) excluded.add(i);
   }
+  return excluded;
+}
+
+export function rewriteMessages(messages: unknown[], rules: SessionRule[] | undefined): unknown[] {
+  if (!rules || rules.length === 0) return messages;
+  const excluded = computeExcluded(messages, rules);
+  // Prune cuts first, then the latest reset on top: a prune range that spans
+  // the reset boundary still cuts its part of the kept tail.
+  const resets = rules.filter(isResetRule);
+  if (resets.length > 0) return applyReset(messages, excluded, resets[resets.length - 1]);
+  if (excluded.size === 0) return messages;
   return messages.filter((_, i) => !excluded.has(i));
 }

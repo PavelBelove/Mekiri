@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import http from "node:http";
 import net from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createDaemon } from "../src/daemon.js";
@@ -201,6 +201,50 @@ describe("daemon", () => {
       requestBody.messages[9],
       requestBody.messages[10],
     ]);
+  });
+
+  it("resets an over-threshold main-thread request and keeps applying the reset afterwards", async () => {
+    const projectDir = mkdtempSync(path.join(tmpdir(), "mekiri-proxy-reset-project-"));
+    mkdirSync(path.join(projectDir, ".mekiri"), { recursive: true });
+    writeFileSync(
+      path.join(projectDir, ".mekiri", "config.json"),
+      JSON.stringify({ contextReset: { enabled: true, thresholdTokens: 5000, tailTokens: 2000, tailTurns: 2 } }),
+    );
+    const registered = await jsonRequest(
+      DAEMON_PORT,
+      { path: "/control/session", method: "POST", headers: { "content-type": "application/json" } },
+      { sessionId: "reset-session", dir: projectDir },
+    );
+    expect(registered.status).toBe(200);
+
+    const turn = (i: number, size: number) => [
+      { role: "user", content: [{ type: "text", text: `prompt ${i}` }] },
+      { role: "assistant", content: [{ type: "text", text: "y".repeat(size) }] },
+    ];
+    const metadata = { user_id: JSON.stringify({ session_id: "reset-session" }) };
+    const send = (messages: unknown[]) =>
+      jsonRequest(DAEMON_PORT, { path: "/v1/messages", method: "POST", headers: { "content-type": "application/json" } }, { messages, metadata });
+
+    const small = [...turn(0, 100), { role: "user", content: [{ type: "text", text: "prompt 1" }] }];
+    await send(small);
+    expect(lastUpstreamBody.messages).toEqual(small);
+
+    const history = [...turn(0, 100), ...turn(1, 20_000), ...turn(2, 100), ...turn(3, 100)];
+    await send(history);
+    const first = lastUpstreamBody.messages[0];
+    expect(first.content[0].text).toContain("[Mekiri context reset]");
+    expect(first.content[1]).toEqual({ type: "text", text: "prompt 2" });
+    expect(lastUpstreamBody.messages.slice(1)).toEqual(history.slice(5));
+
+    const next = [...history, { role: "user", content: [{ type: "text", text: "prompt 4" }] }];
+    await send(next);
+    expect(lastUpstreamBody.messages[0]).toEqual(first);
+    expect(lastUpstreamBody.messages.slice(1)).toEqual(next.slice(5));
+
+    const stored = JSON.parse(readFileSync(path.join(stateDir, "rules.json"), "utf8"))["reset-session"];
+    expect(stored.dir).toBe(projectDir);
+    expect(stored.rules.map((r: { kind?: string }) => r.kind)).toEqual(["reset"]);
+    rmSync(projectDir, { recursive: true, force: true });
   });
 
   it("archives the full uncut wire history to the shadow transcript before applying rule-based cuts", async () => {

@@ -1,3 +1,4 @@
+import { promises as fs } from "node:fs";
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import {
@@ -10,6 +11,7 @@ import {
   saveConfig,
   appendAuditEntry,
   recordDistillate,
+  recordPromptLines,
   readCapsule,
   findCapsuleEntry,
   computeProjectReport,
@@ -20,6 +22,7 @@ import type { RewriteRule } from "./rewriteMessages.js";
 import { spawnClone } from "./spawnClone.js";
 import { loadHookState, saveHookState } from "./hookState.js";
 import { readShadowTranscript, readShadowTranscriptOrNull } from "./shadowTranscript.js";
+import { formatPromptCapsuleLine, formatPromptHeader, parsePromptTarget, readPrompt, readPromptIndex } from "./promptLog.js";
 
 export interface McpServerContext {
   sessionId: string;
@@ -29,20 +32,29 @@ export interface McpServerContext {
   postControlRule: (body: { sessionId: string; dir: string; rule: RewriteRule }) => Promise<void>;
 }
 
+function postControlOverHttp(daemonPort: number, urlPath: string, body: unknown): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const payload = Buffer.from(JSON.stringify(body), "utf8");
+    const req = http.request(
+      { hostname: "127.0.0.1", port: daemonPort, path: urlPath, method: "POST", headers: { "content-type": "application/json", "content-length": payload.length } },
+      (res) => {
+        res.on("data", () => {});
+        res.on("end", () => (res.statusCode === 200 ? resolve() : reject(new Error(`daemon returned ${res.statusCode}`))));
+      }
+    );
+    req.on("error", reject);
+    req.end(payload);
+  });
+}
+
 export function postControlRuleOverHttp(daemonPort: number) {
   return (body: { sessionId: string; dir: string; rule: RewriteRule }): Promise<void> =>
-    new Promise((resolve, reject) => {
-      const payload = Buffer.from(JSON.stringify(body), "utf8");
-      const req = http.request(
-        { hostname: "127.0.0.1", port: daemonPort, path: "/control/rule", method: "POST", headers: { "content-type": "application/json", "content-length": payload.length } },
-        (res) => {
-          res.on("data", () => {});
-          res.on("end", () => (res.statusCode === 200 ? resolve() : reject(new Error(`daemon returned ${res.statusCode}`))));
-        }
-      );
-      req.on("error", reject);
-      req.end(payload);
-    });
+    postControlOverHttp(daemonPort, "/control/rule", body);
+}
+
+/** Tells the daemon which project a session belongs to, before any prune. */
+export function registerSessionOverHttp(daemonPort: number, sessionId: string, dir: string): Promise<void> {
+  return postControlOverHttp(daemonPort, "/control/session", { sessionId, dir });
 }
 
 function renderDistillate(noteType: NoteType, fruit: PortalFruit | DeathReloadFruit): string {
@@ -98,7 +110,11 @@ type PruneResult =
 // right here instead of relying on the agent recalling it from a skill file
 // under pressure.
 const NOT_FOUND_HINT =
-  "Нет совпадения для этой цитаты в транскрипте. Если резать реально нечего прямо сейчас " +
+  "Нет совпадения для этой цитаты в транскрипте. Частая причина: Claude Code не сохраняет " +
+  "текст, написанный между двумя блоками размышлений (thinking -> текст -> thinking -> вызов тулзы), -- " +
+  "ты его видел, но в истории его нет. Тогда процитируй то, что сохраняется на той же границе: " +
+  "параметр вызова тулзы (например, description у Bash) или финальный отчёт хода. " +
+  "Если резать реально нечего прямо сейчас " +
   "(например, цитата — из ещё не завершённого текущего хода, который физически не мог успеть " +
   "записаться на диск) — вызови prune с quote: \"\" и опиши то, что стоит сохранить, в kept_context. " +
   "Это полноценный вызов Mekiri-тулзы, засчитывается и сбрасывает счётчик напоминаний хука. " +
@@ -140,8 +156,32 @@ interface GraftArgs {
 // the caller's own budget on one graft call.
 const RAW_CONTENT_CHAR_LIMIT = 20000;
 
+export interface GraftImage {
+  prompt: number;
+  file: string;
+  mediaType: string;
+  /** base64 -- bin/mcp-server.ts moves these out of the JSON text into MCP
+   *  image content blocks. */
+  data: string;
+}
+
+// Images above this are listed by path instead of inlined.
+const GRAFT_IMAGE_BYTE_LIMIT = 5 * 1024 * 1024;
+
 type GraftResult =
   | { status: "ok"; mode: "toc"; content: string }
+  | {
+      status: "ok";
+      mode: "prompts";
+      content: string;
+      length: number;
+      truncated?: boolean;
+      /** Prompts of the requested range left out because of the size limit. */
+      cut_prompts?: number[];
+      missing_prompts?: number[];
+      hint?: string;
+      images?: GraftImage[];
+    }
   | { status: "ok"; mode: "raw"; content: string; length: number; truncated?: boolean }
   | { status: "not_found" }
   // The target entry predates raw-range recording (written before this
@@ -294,6 +334,19 @@ export function createToolHandlers(context: McpServerContext) {
       const distillateText = sections.join("\n\n");
 
       const header = deriveHeader(validation.fruit);
+      // User prompts seen since the last prune get their `[user #N]` capsule
+      // lines first, so capsule.md reads prompt -> prunes -> prompt. Metadata
+      // only -- the text stays in ~/.mekiri-proxy/prompts/. Never fails the prune.
+      try {
+        const prompts = await readPromptIndex(context.sessionId);
+        await recordPromptLines(
+          context.dir,
+          context.sessionId,
+          prompts.map((meta) => ({ n: meta.n, line: formatPromptCapsuleLine(meta) })),
+        );
+      } catch {
+        // prompt log unreadable -- the prune itself still goes through
+      }
       const { rawSpanLength } = await recordDistillate(
         context.dir,
         {
@@ -385,6 +438,84 @@ export function createToolHandlers(context: McpServerContext) {
           mode: "toc",
         });
         return { status: "ok", mode: "toc", content };
+      }
+
+      const promptTarget = parsePromptTarget(args.target);
+      if (promptTarget) {
+        const sessionId = promptTarget.sessionId ?? context.sessionId;
+        const blocks: string[] = [];
+        const images: GraftImage[] = [];
+        const cut: number[] = [];
+        const missing: number[] = [];
+        let used = 0;
+        let truncated = false;
+        for (let n = promptTarget.from; n <= promptTarget.to; n++) {
+          const prompt = await readPrompt(sessionId, n).catch(() => null);
+          if (!prompt) {
+            missing.push(n);
+            continue;
+          }
+          if (used >= RAW_CONTENT_CHAR_LIMIT) {
+            cut.push(n);
+            continue;
+          }
+          const attachmentLines: string[] = [];
+          const promptImages: GraftImage[] = [];
+          for (const a of prompt.attachments) {
+            if (a.mediaType.startsWith("image/") && a.bytes <= GRAFT_IMAGE_BYTE_LIMIT) {
+              const data = await fs.readFile(a.path).catch(() => null);
+              if (data) {
+                promptImages.push({ prompt: n, file: a.file, mediaType: a.mediaType, data: data.toString("base64") });
+                attachmentLines.push(`(attachment ${a.file}: image, returned below)`);
+                continue;
+              }
+            }
+            attachmentLines.push(`(attachment ${a.file}: ${a.mediaType}, ${a.bytes} bytes -- ${a.path})`);
+          }
+          let block = [formatPromptHeader(prompt.meta), prompt.text, ...attachmentLines].join("\n");
+          if (used + block.length > RAW_CONTENT_CHAR_LIMIT) {
+            if (blocks.length > 0) {
+              cut.push(n);
+              used = RAW_CONTENT_CHAR_LIMIT;
+              continue;
+            }
+            // A single oversize prompt: return its head rather than nothing.
+            block =
+              block.slice(0, RAW_CONTENT_CHAR_LIMIT) +
+              `\n\n[...truncated, showing ${RAW_CONTENT_CHAR_LIMIT} of ${block.length} chars of user #${n}...]`;
+            truncated = true;
+          }
+          blocks.push(block);
+          images.push(...promptImages);
+          used += block.length;
+        }
+        if (blocks.length === 0) return { status: "not_found" };
+        const content = blocks.join("\n\n");
+
+        await appendAuditEntry(context.dir, {
+          event: "graft",
+          timestamp,
+          sessionId: context.sessionId,
+          targetRuleId: args.target,
+          mode: "raw",
+        });
+
+        const prefix = promptTarget.sessionId ? `${promptTarget.sessionId}:` : "";
+        return {
+          status: "ok",
+          mode: "prompts",
+          content,
+          length: content.length,
+          ...(truncated ? { truncated: true } : {}),
+          ...(cut.length > 0
+            ? {
+                cut_prompts: cut,
+                hint: `Size limit reached; continue with graft("${prefix}user#${cut[0]}-${cut[cut.length - 1]}").`,
+              }
+            : {}),
+          ...(missing.length > 0 ? { missing_prompts: missing } : {}),
+          ...(images.length > 0 ? { images } : {}),
+        };
       }
 
       const entry = await findCapsuleEntry(context.dir, args.target);

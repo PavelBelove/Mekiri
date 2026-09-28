@@ -18,11 +18,13 @@ export type {
   RawLine,
   BoundaryResult,
   CapsuleIndexEntry,
+  PromptCapsuleEntry,
 } from "./types.js";
 export { validateFruit } from "./fruitSchema.js";
 export type { ValidateFruitArgs, ValidateFruitResult } from "./fruitSchema.js";
 export { findLastCompactBoundaryIndex } from "./compactZone.js";
-export { findBoundary } from "./quoteMatcher.js";
+export { findBoundary, contentContainsQuote } from "./quoteMatcher.js";
+export type { QuoteScope } from "./quoteMatcher.js";
 export { resolveBoundaryWithRetry } from "./resolveBoundary.js";
 export type { ResolveBoundaryOptions, ResolveBoundaryResult } from "./resolveBoundary.js";
 export { MekiriConfigSchema, defaultConfig } from "./configSchema.js";
@@ -37,7 +39,7 @@ export type {
   ConfigureAuditEntry,
   GraftAuditEntry,
 } from "./auditLog.js";
-export { recordDistillate, readReportRange, readCapsule, findCapsuleEntry, ensureSessionAlias, writeSessionsIndex, slugify } from "./reportStore.js";
+export { recordDistillate, recordPromptLines, readReportRange, readCapsule, findCapsuleEntry, ensureSessionAlias, writeSessionsIndex, slugify } from "./reportStore.js";
 export type { ReportEntryMeta } from "./reportStore.js";
 export { createBranch } from "./branch.js";
 export type { CreateBranchArgs, CreateBranchResult } from "./branch.js";

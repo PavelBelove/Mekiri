@@ -288,6 +288,26 @@ describe("rewriteMessages", () => {
     assertNoOrphanToolResults(result);
   });
 
+  it("cuts from a tool call whose input holds the quote when no text block does (text dropped between thinking blocks)", () => {
+    const messages = [
+      { role: "user", content: "start task" }, // 0 -- kept
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "a" },
+          { type: "thinking", thinking: "b" },
+          { type: "tool_use", id: "toolu_bash", name: "Bash", input: { command: "ls", description: "Compare hook state" } },
+        ],
+      }, // 1 -- cut from here
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_bash", content: "out" }] }, // 2 -- cut
+      { role: "assistant", content: [pruneToolUse("toolu_prune1", "Compare hook state", "mcp__mekiri-proxy__prune")] }, // 3 -- anchor
+      { role: "user", content: [pruneToolResult("toolu_prune1", "RULE_1")] }, // 4
+    ];
+    const result = rewriteMessages(messages, [{ id: "RULE_1", matchQuote: "Compare hook state" }]);
+    expect(result).toEqual([messages[0], messages[3], messages[4]]);
+    assertNoOrphanToolResults(result);
+  });
+
   it("does not mutate the original messages array", () => {
     const messages = [
       { role: "user", content: "turn0" },

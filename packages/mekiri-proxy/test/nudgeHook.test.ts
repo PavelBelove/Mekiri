@@ -212,6 +212,19 @@ describe("decideNudge", () => {
       expect(cutting.nextState.consecutiveTraceOnly).toBe(0);
     });
 
+    it("does not count a trace-only prune forced by the Stop hook, and clears the flag", () => {
+      const state = { callsSinceReset: 0, threshold: 5, consecutiveIgnored: 0, consecutiveTraceOnly: 2, stopForcedPrune: true };
+      const afterRead = decideNudge(state, "Read");
+      expect(afterRead.nextState.stopForcedPrune).toBe(true);
+      const forced = decideNudge(afterRead.nextState, "mcp__mekiri-proxy__prune", { quote: "" });
+      expect(forced.nextState.consecutiveTraceOnly).toBe(2);
+      expect(forced.nextState.stopForcedPrune).toBeUndefined();
+      expect(forced.additionalContext).toBeUndefined();
+
+      const midTurn = decideNudge(forced.nextState, "mcp__mekiri-proxy__prune", { quote: "" });
+      expect(midTurn.nextState.consecutiveTraceOnly).toBe(3);
+    });
+
     it("resets consecutiveTraceOnly on a non-prune mekiri tool call", () => {
       const state = { callsSinceReset: 0, threshold: 5, consecutiveIgnored: 0, consecutiveTraceOnly: 2 };
       const { nextState } = decideNudge(state, "mcp__mekiri-proxy__graft");

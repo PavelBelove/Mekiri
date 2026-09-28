@@ -19,7 +19,7 @@ There are two distinct setups. Pick one before you start:
 
 ## A. Wiring Mekiri into a project (the default case)
 
-> **Security note before you start:** the first `prune`/`sprout` call you make in this project creates a `.mekiri/` directory in *this project's own root* (see step 9) and starts writing session distillates into it — which can contain whatever the user or the agent put into the conversation, secrets and personal data included. Add `.mekiri/` to this project's own `.gitignore` as part of step 3 below (create the file if it doesn't exist), before that directory has a chance to exist uncommitted-but-untracked. If you discover during this setup that it's already missing and something's already been committed, flag that to the human explicitly rather than silently rewriting history yourself.
+> **Security note before you start:** the first `prune`/`sprout` call you make in this project creates a `.mekiri/` directory in *this project's own root* (see step 9) and starts writing session distillates into it — which can contain whatever the user or the agent put into the conversation, secrets and personal data included. Add `.mekiri/` to this project's own `.gitignore` as part of step 3 below (create the file if it doesn't exist), before that directory has a chance to exist uncommitted-but-untracked. If you discover during this setup that it's already missing and something's already been committed, flag that to the human explicitly rather than silently rewriting history yourself. The raw material is kept outside the project: `mekiri-proxy` stores the shadow transcript and a verbatim log of the user's prompts (the most likely place for pasted secrets) under `~/.mekiri-proxy/`, with owner-only permissions. Nothing to configure for that, but mention it to the human.
 
 1. **Check Node.** `node --version` must be ≥ 22.6 (the hook uses
    `--experimental-strip-types`). If lower, upgrade before continuing — an older Node makes
@@ -83,23 +83,20 @@ There are two distinct setups. Pick one before you start:
    Same absolute `<MEKIRI_DIR>` — don't use `$CLAUDE_PROJECT_DIR` here, it resolves to *this*
    project, not to wherever Mekiri itself lives.
 
-5. **Copy all four skills:**
+5. **Copy all three skills:**
    ```bash
    cp -r <MEKIRI_DIR>/.claude/skills/mekiri-gate .claude/skills/
-   cp -r <MEKIRI_DIR>/.claude/skills/mekiri-orchestrator .claude/skills/
    cp -r <MEKIRI_DIR>/.claude/skills/mekiri-tuning .claude/skills/
    cp -r <MEKIRI_DIR>/.claude/skills/mekiri-warmup .claude/skills/
    ```
-   `mekiri-orchestrator` also references its own `scripts/*.sh` (`ensure-running.sh`,
-   `send.sh`) — they take the project path as an argument and don't hardcode Mekiri's
-   location, but on first real use it's worth checking once that the scripts can find the
-   right binaries in your environment.
+   If this project still has a `.claude/skills/mekiri-orchestrator/` from an older install,
+   delete it — that skill no longer exists.
 
 6. **Merge Mekiri's own instructions into this project's `CLAUDE.md`. Not optional** — without
    this, the agent working in this project has no way to know these tools exist or when to
    reach for them; the MCP wiring alone doesn't teach that. Read `<MEKIRI_DIR>/CLAUDE.md`: it
    has three trigger paragraphs, each naming a condition and ending in "check the `mekiri-X`
-   skill" (for `mekiri-orchestrator`, `mekiri-gate`, `mekiri-warmup`). They're written
+   skill" (two for `mekiri-gate`, one for `mekiri-warmup`). They're written
    generically ("this project", "this session") and are portable as-is. Everything else in
    that file — a "respond in Russian" line, the "# Mekiri — agent instructions" header, the
    "this is the Mekiri project itself" description — is specific to that repository and must
@@ -149,6 +146,12 @@ There are two distinct setups. Pick one before you start:
      chain — MCP wiring, daemon, per-project routing — is actually working end to end, not
      just that a health check returned 200.
 
+   - Optional, once the above works: offer the user the context reset that replaces Claude
+     Code's auto-compaction (`configure_mekiri({ patch: { contextReset: { enabled: true } } })`,
+     off by default — see `<MEKIRI_DIR>/docs/mechanics/context-reset.md`). Don't turn it on
+     without asking, and don't touch `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` for it: that variable
+     can only make Claude Code compact earlier.
+
 10. **If something's still not working**, check for a stale competing install before assuming
     the repo is broken: `ps aux | grep mekiri-proxy` and see what path the running
     `mcp-server.ts`/`daemon.ts` processes actually point at (`/health`'s `sourceDir` field
@@ -173,6 +176,23 @@ thing that happens either way.
    `.claude/skills/*` all ship already-correct in the repo for the self-hosting case — that's
    the point of self-hosting. Don't copy or edit them, and skip A.3–A.6 entirely.
 4. Do A.7–A.9 (env var, restart, verify) exactly as written, against this clone.
+
+## B2. Updating an existing install
+
+If this project already has Mekiri wired in and you were asked to bring it up to date:
+
+1. `git -C <MEKIRI_DIR> pull`, then `npm install` and the same typecheck/test run as A.2.
+2. **Re-copy the skills** from step A.5 over the existing ones — they change along with the
+   code (e.g. `mekiri-warmup` gained a section the context reset relies on). Delete
+   `.claude/skills/mekiri-orchestrator/` if it's still there.
+3. Re-read `<MEKIRI_DIR>/CLAUDE.md`'s trigger paragraphs and compare them with the copies in
+   this project's `CLAUDE.md` (step A.6); update the copies if the wording changed.
+4. **Restart the daemon.** It is one long-lived process per machine and keeps running the
+   code it started with: `pkill -f mekiri-proxy/bin/daemon.ts`. The next Mekiri tool call
+   respawns it from the updated clone. It serves every project on the machine, so the other
+   open sessions briefly lose it too — tell the human before doing this.
+5. Restart the whole Claude Code session (A.8) and verify (A.9); `/health`'s `pid` should
+   differ from the one before the update.
 
 ## C. When you're done: report back, don't just stop
 

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   recordDistillate,
+  recordPromptLines,
   readReportRange,
   readCapsule,
   findCapsuleEntry,
@@ -386,5 +387,35 @@ describe("reportStore", () => {
       const contentAfterManualCall = await fs.readFile(path.join(dir, ".mekiri", "sessions-index.md"), "utf8");
       expect(contentAfterManualCall).toBe(content);
     });
+  });
+});
+
+describe("recordPromptLines", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), "mekiri-prompt-lines-"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("writes each prompt line once, in order, and keeps distillate readers working", async () => {
+    const line = (n: number) => ({ n, line: `[user #${n}] 12:0${n} · 10 B · speech — graft("user#${n}")` });
+    expect(await recordPromptLines(dir, "session-1", [line(2), line(1)])).toEqual([1, 2]);
+    await recordDistillate(dir, meta(), "first prune", "body");
+    expect(await recordPromptLines(dir, "session-1", [line(1), line(2), line(3)])).toEqual([3]);
+
+    const capsule = await readCapsule(dir, "session-1");
+    const capsuleLines = capsule.trimEnd().split("\n");
+    expect(capsuleLines[0]).toContain("[user #1]");
+    expect(capsuleLines[1]).toContain("[user #2]");
+    expect(capsuleLines[2]).toContain("first prune");
+    expect(capsuleLines[3]).toContain("[user #3]");
+
+    expect((await findCapsuleEntry(dir, "rule-1"))?.header).toBe("first prune");
+    const sessionsIndex = await fs.readFile(path.join(dir, ".mekiri", "sessions-index.md"), "utf8");
+    expect(sessionsIndex).toContain("first prune");
   });
 });

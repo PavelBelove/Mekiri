@@ -3,6 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+// The real marker Claude Code's compaction summary starts with -- the shadow
+// archive only accepts a changed first message as a new thread with it.
+const SUMMARY = "This session is being continued from a previous conversation. compact-summary";
+
 describe("shadowTranscript", () => {
   let stateDir: string;
 
@@ -82,10 +86,10 @@ describe("shadowTranscript", () => {
     ]);
     // Compaction replaces older history with one synthetic summary message,
     // so the next request's array is shorter than the last one seen.
-    await appendNewShadowMessages("compact-session", [{ role: "user", content: "compact-summary" }]);
+    await appendNewShadowMessages("compact-session", [{ role: "user", content: SUMMARY }]);
 
     const transcript = await readShadowTranscript("compact-session");
-    expect(transcript.map((l) => l.message?.content)).toEqual(["a", "b", "c", "compact-summary"]);
+    expect(transcript.map((l) => l.message?.content)).toEqual(["a", "b", "c", SUMMARY]);
   });
 
   it("resumes normal incremental appends after a shrink, without re-duplicating on every subsequent call", async () => {
@@ -95,16 +99,16 @@ describe("shadowTranscript", () => {
       { role: "assistant", content: "b" },
       { role: "user", content: "c" },
     ]);
-    await appendNewShadowMessages("post-compact-session", [{ role: "user", content: "compact-summary" }]);
+    await appendNewShadowMessages("post-compact-session", [{ role: "user", content: SUMMARY }]);
     // Normal growth relative to the new, post-compaction baseline -- must
     // append only the one new tail message, not re-append the whole array.
     await appendNewShadowMessages("post-compact-session", [
-      { role: "user", content: "compact-summary" },
+      { role: "user", content: SUMMARY },
       { role: "assistant", content: "new turn" },
     ]);
 
     const transcript = await readShadowTranscript("post-compact-session");
-    expect(transcript.map((l) => l.message?.content)).toEqual(["a", "b", "c", "compact-summary", "new turn"]);
+    expect(transcript.map((l) => l.message?.content)).toEqual(["a", "b", "c", SUMMARY, "new turn"]);
   });
 
   it("keeps separate sessions in separate files", async () => {
@@ -165,5 +169,125 @@ describe("shadowTranscript", () => {
     const transcript = await second.readShadowTranscript("restart-session");
     expect(transcript).toHaveLength(3);
     expect(transcript.map((l) => l.message?.content)).toEqual(["a", "b", "c"]);
+  });
+  it("archives an in-place edit of the last message as a revision line (interrupt case)", async () => {
+    const { appendNewShadowMessages, readShadowTranscript } = await import("../src/shadowTranscript.js");
+    const toolResult = { type: "tool_result", tool_use_id: "t1", content: "ok" };
+    await appendNewShadowMessages("interrupt-session", [
+      { role: "user", content: "start" },
+      { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }] },
+      { role: "user", content: [toolResult] },
+    ]);
+    // Interrupt: same length, marker + new prompt merged into the last message.
+    const edited = [
+      toolResult,
+      { type: "text", text: "[Request interrupted by user]" },
+      { type: "text", text: "stop, do it differently" },
+    ];
+    await appendNewShadowMessages("interrupt-session", [
+      { role: "user", content: "start" },
+      { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }] },
+      { role: "user", content: edited },
+    ]);
+    // Unchanged resend must not add anything.
+    await appendNewShadowMessages("interrupt-session", [
+      { role: "user", content: "start" },
+      { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }] },
+      { role: "user", content: edited },
+    ]);
+
+    const transcript = await readShadowTranscript("interrupt-session");
+    expect(transcript).toHaveLength(4);
+    expect(transcript[3].revision).toBe(true);
+    expect(transcript[3].revisionOf).toBe(transcript[2].uuid);
+    expect(new Set(transcript.map((l) => l.uuid)).size).toBe(4);
+    expect(transcript[3].message?.content).toEqual(edited);
+  });
+
+  it("archives an edited previous-last message before the new tail when the array also grew", async () => {
+    const { appendNewShadowMessages, readShadowTranscript } = await import("../src/shadowTranscript.js");
+    await appendNewShadowMessages("grow-edit-session", [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b" },
+    ]);
+    await appendNewShadowMessages("grow-edit-session", [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b-edited" },
+      { role: "user", content: "c" },
+    ]);
+    const transcript = await readShadowTranscript("grow-edit-session");
+    expect(transcript.map((l) => l.message?.content)).toEqual(["a", "b", "b-edited", "c"]);
+    expect(transcript[2].revisionOf).toBe(transcript[1].uuid);
+    expect(transcript[3].revision).toBeUndefined();
+  });
+
+  it("reseeds correctly after a restart when revision lines are present", async () => {
+    const first = await import("../src/shadowTranscript.js");
+    await first.appendNewShadowMessages("restart-revision-session", [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b" },
+    ]);
+    await first.appendNewShadowMessages("restart-revision-session", [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b2" },
+    ]);
+
+    const { vi } = await import("vitest");
+    vi.resetModules();
+    const second = await import("../src/shadowTranscript.js");
+    // Same array again: nothing new (length from non-revision lines, hash from last line).
+    await second.appendNewShadowMessages("restart-revision-session", [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b2" },
+    ]);
+    await second.appendNewShadowMessages("restart-revision-session", [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b2" },
+      { role: "user", content: "c" },
+    ]);
+    const transcript = await second.readShadowTranscript("restart-revision-session");
+    expect(transcript.map((l) => l.message?.content)).toEqual(["a", "b", "b2", "c"]);
+    expect(new Set(transcript.map((l) => l.uuid)).size).toBe(4);
+  });
+  it("ignores side requests that share the session id (auto-mode classifier)", async () => {
+    const { appendNewShadowMessages, readShadowTranscript } = await import("../src/shadowTranscript.js");
+    const main = [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b" },
+      { role: "user", content: "c" },
+    ];
+    expect(await appendNewShadowMessages("side-session", main)).toBe(true);
+    expect(
+      await appendNewShadowMessages("side-session", [
+        { role: "user", content: [{ type: "text", text: "The following is the user's CLAUDE.md configuration." }] },
+        { role: "user", content: [{ type: "text", text: "<transcript>" }] },
+      ]),
+    ).toBe(false);
+    expect(await appendNewShadowMessages("side-session", [...main, { role: "assistant", content: "d" }])).toBe(true);
+
+    const transcript = await readShadowTranscript("side-session");
+    expect(transcript.map((l) => l.message?.content)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("after a restart, tracks the thread from the last compaction summary on disk", async () => {
+    const first = await import("../src/shadowTranscript.js");
+    await first.appendNewShadowMessages("restart-compact", [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b" },
+      { role: "user", content: "c" },
+    ]);
+    await first.appendNewShadowMessages("restart-compact", [{ role: "user", content: SUMMARY }]);
+
+    const { vi } = await import("vitest");
+    vi.resetModules();
+    const second = await import("../src/shadowTranscript.js");
+    expect(
+      await second.appendNewShadowMessages("restart-compact", [
+        { role: "user", content: SUMMARY },
+        { role: "assistant", content: "d" },
+      ]),
+    ).toBe(true);
+    const transcript = await second.readShadowTranscript("restart-compact");
+    expect(transcript.map((l) => l.message?.content)).toEqual(["a", "b", "c", SUMMARY, "d"]);
   });
 });

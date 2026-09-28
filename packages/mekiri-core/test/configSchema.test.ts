@@ -18,6 +18,12 @@ describe("MekiriConfigSchema", () => {
       stopHook: {
         enabled: false,
       },
+      contextReset: {
+        enabled: false,
+        thresholdTokens: 0,
+        tailTokens: 20000,
+        tailTurns: 4,
+      },
     });
   });
 

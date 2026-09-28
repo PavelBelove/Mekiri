@@ -80,7 +80,8 @@ Independently of that, every entry also carries a mechanical `activityLog` — a
 
 ```
 graft(
-  target?: string  # rule_id of an entry from the table of contents in capsule.md of any session in this project
+  target?: string  # rule_id of an entry from the table of contents in capsule.md of any session in this project,
+                   # or user#N / user#N-M / <sessionId>:user#N-M for the user's own prompts
 )
 ```
 
@@ -88,6 +89,7 @@ Works as a read from a flat on-disk archive, not from the live session — it su
 
 - **Without `target`** — the table of contents (`capsule.md`) of only the current session: a list of `prune` entries with their `rule_id`, tagged `[kept]`, `[cut]`, or `[kept+cut]` depending on which sides that call touched, cheap regardless of the project age.
 - **With `target = rule_id`** — searches the project-wide index (`.mekiri/capsule-index.jsonl`), which covers every session ever run in this project; finds the session, and returns the **raw transcript fragment** that call originally covered (verbatim, not the distillate) wrapped in recovery metadata (`event`, `session`, `timestamp`). Large fragments (raw ranges routinely run into the tens of thousands of characters) are hard-truncated with the real length reported alongside; legacy pre-shadow-archive entries come back `no_raw_range`, and the rare case of a shadow file itself missing from disk comes back `transcript_unavailable` — either way, an explicit status rather than silently substituting the distillate or crashing.
+- **With `target = "user#7"`, `"user#7-10"` or `"<sessionId>:user#7-10"`** — the user's own prompts, verbatim, one header per prompt (`[user #7 · 12:22 · 96 KB · log · interrupted]`). Image attachments come back as image content blocks; other attachments as absolute paths. A range that exceeds the size limit is cut at whole prompts, and the response lists the prompts left out (`cut_prompts`) with the `graft` call that continues. The prompts live outside the project (see [library.md](library.md#the-users-own-prompts)); their `[user #N]` lines are added to `capsule.md` on every `prune`, before that `prune`'s own entry. When the last prompt reads "continue", this is how to find the instruction it continues.
 
 Practical application: if, after a rollback, a past reply the agent expected to find is not in the context — that is almost always `prune` working as intended, not a glitch. Verify it via `graft`, not by rewriting from scratch: before claiming "that did not happen," first `graft(rule_id)` and read the actual original wording it returns, and only then draw a conclusion. This is deliberately not the distillate: a distillate is the agent's own summary of what happened and cannot self-certify that summary's accuracy — `graft` exists specifically to check a distillate (or a suspicion that one is wrong) against the real transcript underneath it.
 

@@ -16,6 +16,15 @@ Warming up: turning Mekiri's own archive of past sessions into a running start f
 
 Not for: routine work where you already know enough to proceed. Warming up has its own cost (reading files) — don't do it out of habit when the task doesn't need project history.
 
+## After a Mekiri context reset
+
+When the conversation opens with `[Mekiri context reset]`, the warm-up target is **this** session, not past ones — the capsule is already inline, so skip `sessions-index.md`:
+
+1. Read the **last few entries** of this session's `report.md` (the path is in the reset message). The newest `kept_context` notes are the running state of the current task — what was fixed, what's pending, decisions in force. They sat in the dropped middle of the conversation, so they're no longer in context.
+2. Compare with the kept tail and the last user prompt (both verbatim in context): find where the work actually stopped.
+3. Only if the tail doesn't explain the gap: `graft` the `[auto-reset]` entry named in the reset message (the unarchived stretch before the tail), or `graft("user#N-M")` for earlier prompts whose exact wording matters.
+4. `prune(quote: "", kept_context: "<where the task stands and what's next>")`, then continue the task — don't re-verify finished work.
+
 ## The three-hop path
 
 1. **`.mekiri/sessions-index.md`** — one line per session, human-readable, appended in order, so its last line is always the most recently closed session on this project. Skim it to work out *which* sessions are relevant (by date, by summary text) — but treat the last line as a default candidate regardless of whether its summary sounds topically related: whatever the immediately preceding agent was doing is, with high likelihood, connected to why a new session just started on this project at all. Don't open every other session's capsule blind.

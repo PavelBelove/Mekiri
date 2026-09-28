@@ -24,6 +24,35 @@ describe("findBoundary", () => {
     expect(result).toEqual({ status: "ok", messageId: a1.uuid });
   });
 
+  it("falls back to tool-call inputs when no text block holds the quote (text dropped between thinking blocks)", () => {
+    const u1 = userLine(null, "audit the hooks");
+    const a1 = assistantThinkingLine(u1.uuid!, "hmm");
+    a1.message!.content = [
+      { type: "thinking", text: "first" },
+      { type: "thinking", text: "second" },
+      { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls", description: "Compare hook state in both dirs" } },
+    ];
+    const result = findBoundary([u1, a1], "Compare hook state in both");
+    expect(result).toEqual({ status: "ok", messageId: a1.uuid });
+  });
+
+  it("prefers a text match over a later tool-input match of the same quote", () => {
+    const u1 = userLine(null, "go");
+    const a1 = assistantLine(u1.uuid!, "Now writing the release notes.");
+    const a2 = assistantThinkingLine(a1.uuid!, "x");
+    a2.message!.content = [{ type: "tool_use", id: "t2", name: "Write", input: { content: "Now writing the release notes." } }];
+    expect(findBoundary([u1, a1, a2], "Now writing the release notes")).toEqual({ status: "ok", messageId: a1.uuid });
+  });
+
+  it("never matches the quote inside a Mekiri tool call's own input", () => {
+    const u1 = userLine(null, "go");
+    const a1 = assistantThinkingLine(u1.uuid!, "x");
+    a1.message!.content = [
+      { type: "tool_use", id: "t3", name: "mcp__mekiri-proxy__prune", input: { quote: "an invented quote" } },
+    ];
+    expect(findBoundary([u1, a1], "an invented quote")).toEqual({ status: "not_found" });
+  });
+
   it("returns not_found when the quote appears nowhere", () => {
     const u1 = userLine(null, "fix the flaky test");
     const a1 = assistantLine(u1.uuid!, "Looking into it.");
@@ -53,6 +82,23 @@ describe("findBoundary", () => {
     const thinking = assistantThinkingLine(u1.uuid!, "Internal reasoning phrase that should not match.");
     const result = findBoundary([u1, thinking], "Internal reasoning phrase");
     expect(result).toEqual({ status: "not_found" });
+  });
+
+  it("finds a quote in the stretch a mid-turn compaction kept verbatim, though it sits before the summary on disk", () => {
+    const u1 = userLine(null, "start");
+    const old = assistantLine(u1.uuid!, "Compacted away for good.");
+    const kept = assistantLine(old.uuid!, "Writing the docs now, mid-turn.");
+    const { summary } = compactPair(kept.uuid!);
+    // Real compact_boundary lines carry the preserved uuids (Claude Code 2.1.x).
+    const system: RawLine = {
+      type: "system",
+      subtype: "compact_boundary",
+      compactMetadata: { trigger: "auto", preservedMessages: { anchorUuid: summary.uuid, uuids: [kept.uuid], allUuids: [kept.uuid] } },
+    };
+    const lines: RawLine[] = [u1, old, kept, system, summary];
+
+    expect(findBoundary(lines, "Writing the docs now")).toEqual({ status: "ok", messageId: kept.uuid });
+    expect(findBoundary(lines, "Compacted away")).toEqual({ status: "in_compacted_zone", lastCompactMessageId: summary.uuid });
   });
 
   it("returns in_compacted_zone when the quote only exists before the last compact boundary", () => {
