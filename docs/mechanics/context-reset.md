@@ -19,15 +19,16 @@ On every main-thread request (side requests such as the auto-mode classifier are
 - Preferred: **at the last `prune`** (its call and result stay as the first kept messages), when the tail from there fits `tailTokens` (default 20k). Everything dropped is then already in the library.
 - Otherwise: the last `tailTurns` turns (default 4; a turn opens at a user message that answers no tool call), shortened from the front until it fits `tailTokens`. When even one tool call doesn't fit (a giant tool result), only the last call and its result are kept.
 - A tail never starts at a `tool_result`, so a `tool_use` is never separated from its result. A new reset only moves the boundary forward.
+- A reset must drop at least 30% of the messages' estimated tokens, or it isn't done. Otherwise a threshold set close to prefix + tail would trigger a fresh reset on every request without freeing any real room.
 
 ## What the model sees after a reset
 
 The prefix (system prompt, tools) is untouched. `messages[]` becomes:
 
-1. One injected user message: the `<system-reminder>` blocks of the original first message (CLAUDE.md and the like), then the reset instruction — warm up with `mekiri-warmup` first, then continue without redoing finished work — with this session's `capsule.md` inline (the `[user #N]` lines included), then **the last user prompt verbatim**, with its attachments, when it lies before the tail. When the tail starts with a user message, the injection is merged into it.
+1. One injected user message: the `<system-reminder>` blocks of the original first message (CLAUDE.md and the like), then the reset instruction — warm up with the "After a Mekiri context reset" section of `mekiri-warmup` first, starting from the last entries of this session's own `report.md` (named by path; its newest `kept_context` notes are the current task's state), then continue without redoing finished work — with this session's `capsule.md` inline (the `[user #N]` lines included), then **the last user prompt verbatim**, with its attachments, when it lies before the tail. When the tail starts with a user message, the injection is merged into it.
 2. The kept tail, verbatim.
 
-Claude Code still sends its full history on every request, so the reset is stored as a rule in `~/.mekiri-proxy/rules.json` (`kind: "reset"`, anchored by the hash of the first kept message, `cache_control` ignored) and re-applied to every later request, after the prune cuts. The injected text is frozen at reset time, so it stays byte-identical and cacheable.
+Claude Code still sends its full history on every request, so the reset is stored as a rule in `~/.mekiri-proxy/rules.json` (`kind: "reset"`, anchored by the hash of the first kept message, `cache_control` ignored) and re-applied to every later request, after the prune cuts. A `prune` rule posted while a reset is being computed is kept: the reset is appended to the rule list as it stands when it's saved, not to an earlier snapshot. The injected text is frozen at reset time, so it stays byte-identical and cacheable.
 
 ## Nothing is lost: the `[auto-reset]` record
 

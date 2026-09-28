@@ -151,6 +151,14 @@ curl http://127.0.0.1:8791/health
 
 Expected response: `{"status":"ok","service":"mekiri-proxy-daemon"}`. The daemon comes up automatically on the first call to any Mekiri tool — no need to start it manually.
 
+## 8. Updating
+
+1. `git -C <MEKIRI_DIR> pull && (cd <MEKIRI_DIR> && npm install)`.
+2. Re-copy the skills (§5) over the existing ones — they change along with the code. Delete `.claude/skills/mekiri-orchestrator/` if an older install left it behind.
+3. Compare the trigger paragraphs in the target project's `CLAUDE.md` with `<MEKIRI_DIR>/CLAUDE.md` (§6).
+4. Restart the daemon: `pkill -f mekiri-proxy/bin/daemon.ts`. It is one process per machine and keeps running the code it started with; the next Mekiri tool call respawns it from the updated clone. Every open session on the machine goes through it, so pick a quiet moment.
+5. Restart the Claude Code session and verify (§7).
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -158,5 +166,5 @@ Expected response: `{"status":"ok","service":"mekiri-proxy-daemon"}`. The daemon
 | `curl .../health` doesn't respond | The daemon hasn't come up yet — call any Mekiri tool (e.g. `metrics`) and check again. If that doesn't help — look at the daemon log in `~/.mekiri-proxy/`. |
 | `nudge-hook.ts` hook fails with a syntax error | Node version below 22.6 (see step 0) — the `--experimental-strip-types` flag isn't supported. |
 | The `prune`/`sprout`/... MCP tools aren't visible in the session | Check that `mekiri-proxy` is listed in `enabledMcpjsonServers` in `.claude/settings.json`, and that the session was restarted after editing `.mcp.json`. |
-| `prune` returns `not_found`/`ambiguous` | Standard behavior of the quote-based addressing protocol, not an install bug — see [`../../docs/mechanics/architecture.md`](../../docs/mechanics/architecture.md#quote-boundary-addressing). |
-| Things work but not the way this clone's code should behave (e.g. after pulling a fix) | Another Mekiri clone's daemon may already own port 8791 and be silently serving every project on the machine. Check `curl .../health` for `pid`/`sourceDir` and compare against `ps aux \| grep mekiri-proxy` — see [`../../docs/mechanics/architecture.md`](../../docs/mechanics/architecture.md#the-daemon-is-one-process-per-machine). |
+| `prune` returns `not_found`/`ambiguous` | Standard behavior of the quote-based addressing protocol, not an install bug — see [`../../docs/mechanics/architecture.md`](../../docs/mechanics/architecture.md#addressing-the-boundary-a-verbatim-quote); the `hint` field in the response says what to quote instead. |
+| Things work but not the way this clone's code should behave (e.g. after pulling a fix) | Another Mekiri clone's daemon may already own port 8791 and be silently serving every project on the machine. Check `curl .../health` for `pid`/`sourceDir` and compare against `ps aux \| grep mekiri-proxy` — see [`../../docs/mechanics/architecture.md`](../../docs/mechanics/architecture.md#the-daemon-is-one-process-per-machine-by-design). |

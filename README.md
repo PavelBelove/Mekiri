@@ -44,6 +44,7 @@ Three effects compound as a session runs long, only the first of which is about 
 - **More runway before compaction.** A session's cost without hygiene grows roughly quadratically with turn count — every turn re-reads everything the previous ones accumulated. Hygiene removes exactly the part of that growth that's garbage, so the number of agent turns a session can cover before hitting the compaction ceiling ("effective mileage") goes up — often several-fold on debugging and point-fix tasks, which is exactly where that ceiling bites hardest today.
 - **The main task stays legible mid-context.** A normal agent chasing a bug tries several things before the fix lands, and all of those attempts stay sitting in the context right next to the actual task — diluting it, the well-documented "lost in the middle" effect where content buried mid-context draws less attention than content at either edge. Mekiri rolls the failed attempts back instead of leaving them in place, so once the bug is actually fixed, the original task sits at the tail of the context — the zone of maximum recency and attention — instead of several thousand tokens of dead ends deep.
 - **The next session doesn't start from zero.** Every `prune` call also feeds the project's library (see above) — a decision, an invariant, or a root cause found once doesn't need re-deriving by a fresh session or a sprout clone picking the project back up later.
+- **Hitting the limit stops being a loss.** When a session does reach the window limit, Mekiri can replace Claude Code's auto-compaction (opt-in): the proxy drops the middle of the conversation mechanically, keeps the tail and the user's last prompt verbatim, and the agent warms itself back up from the session's own library — no extra summarization call, no lost `rule_id`s. See [context-reset.md](docs/mechanics/context-reset.md).
 
 ## Example
 
@@ -65,7 +66,7 @@ The next request to the model from this session no longer contains the 500 log l
 
 ## Status
 
-V 0.3. Implemented and used in the project's own day-to-day design (dogfooding): `prune` (a single dual-boundary call, superseding the earlier separate `tag`), `sprout`, `graft`, `configure_mekiri`, `metrics`, `nudge-hook` (a forced reminder to use the tools), `Stop`-hook-forced `prune` (guarantees a session's final stretch always gets indexed into the archive, even if the agent never calls `prune` again on its own — see [architecture.md](docs/mechanics/architecture.md#guaranteeing-the-tail-the-stop-hook-and-preserveFromQuote)), the user prompt log (`graft("user#N-M")`, kept outside the project — see [library.md](docs/mechanics/library.md)), and the context reset that replaces Claude Code's auto-compaction (opt-in per project — see [context-reset.md](docs/mechanics/context-reset.md)). Not implemented: `sprout` with `wait_mode: "async"`.
+V 0.3. Implemented and used in the project's own day-to-day design (dogfooding): `prune` (a single dual-boundary call, superseding the earlier separate `tag`), `sprout`, `graft`, `configure_mekiri`, `metrics`, `nudge-hook` (a forced reminder to use the tools), `Stop`-hook-forced `prune` (guarantees a session's final stretch always gets indexed into the archive, even if the agent never calls `prune` again on its own — see [architecture.md](docs/mechanics/architecture.md#guaranteeing-the-tail-the-stop-hook-and-preservefromquote)), the user prompt log (`graft("user#N-M")`, kept outside the project — see [library.md](docs/mechanics/library.md)), and the context reset that replaces Claude Code's auto-compaction (opt-in per project — see [context-reset.md](docs/mechanics/context-reset.md)). Not implemented: `sprout` with `wait_mode: "async"`.
 
 ## Installation
 
@@ -96,6 +97,7 @@ Full turnkey instructions — [packages/mekiri-proxy/INSTALL.md](packages/mekiri
 - [library.md](docs/mechanics/library.md) — the project-wide archive on its own terms: three layers, why it's a ship's log and card catalog, not RAG or a Zettelkasten
 - [sprout.md](docs/mechanics/sprout.md) — warm fork, limitations, the clone's right to self-escalate
 - [gate.md](docs/mechanics/gate.md) — when to `prune`, when to `sprout`, when to use a clean subagent, when to just stay inline
+- [context-reset.md](docs/mechanics/context-reset.md) — near the window limit, drop the middle mechanically and warm up from the library instead of auto-compacting
 - [tuning-and-metrics.md](docs/mechanics/tuning-and-metrics.md) — `configure_mekiri`, metric formulas, `nudge-hook`
 
 ## Philosophy
