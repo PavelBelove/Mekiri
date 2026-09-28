@@ -90,7 +90,8 @@ export function isTraceOnlyPrune(toolName: string, toolInput?: unknown): boolean
 
 function traceOnlyOveruseText(consecutiveTraceOnly: number): string {
   return `[Mekiri] ${consecutiveTraceOnly}-й холостой prune (quote: "") подряд без единого реального среза. ` +
-    `Это правда так — ни разу не было эпизода, что резать? Или это стало способом обходить поиск границы вместо честного prune?`;
+    `Это правда так — ни разу не было эпизода, что резать? Или это стало способом обходить поиск границы вместо честного prune? ` +
+    `Резать можно и посреди спринта: процитируй description одного из прошлых вызовов тулз, которым начался закрытый эпизод.`;
 }
 
 /** Reason text for a hard PostToolUse block. Unlike nudgeText, this is not

@@ -43,7 +43,7 @@ describe("rewriteMessages", () => {
     const messages = [
       { role: "user", content: "start task" }, // 0 -- must survive: this is the original request
       { role: "assistant", content: [{ type: "text", text: "reply1 is where garbage begins" }] }, // 1 -- cut
-      { role: "user", content: "turn2" }, // 2 -- cut
+      { role: "user", content: "<system-reminder>turn2</system-reminder>" }, // 2 -- cut (not a real prompt: prompts are salvaged)
       { role: "assistant", content: [pruneToolUse("toolu_prune1", "reply1 is where garbage begins")] }, // 3 -- kept (anchor)
       { role: "user", content: [pruneToolResult("toolu_prune1", "RULE_1")] }, // 4 -- kept (carries distillate)
       { role: "assistant", content: [{ type: "text", text: "turn5" }] }, // 5 -- kept
@@ -60,7 +60,7 @@ describe("rewriteMessages", () => {
     const messages = [
       { role: "user", content: "turn0" }, // 0 kept
       { role: "assistant", content: [{ type: "text", text: "Sure, here's the plan: step one is to set up the repo." }] }, // 1 cut
-      { role: "user", content: "turn2" }, // 2 cut
+      { role: "user", content: "<system-reminder>turn2</system-reminder>" }, // 2 cut (not a real prompt: prompts are salvaged)
       { role: "assistant", content: [pruneToolUse("toolu_S", "step one is to set up the repo")] }, // 3 kept
       { role: "user", content: [pruneToolResult("toolu_S", "RULE_S")] }, // 4 kept
       { role: "user", content: "turn5" }, // 5 kept
@@ -74,12 +74,12 @@ describe("rewriteMessages", () => {
     const messages = [
       { role: "user", content: "turn0" }, // 0 kept
       { role: "assistant", content: [{ type: "text", text: "quoteA" }] }, // 1 cut (range A)
-      { role: "user", content: "turn2" }, // 2 cut (range A)
+      { role: "user", content: "<system-reminder>turn2</system-reminder>" }, // 2 cut (not a real prompt: prompts are salvaged) (range A)
       { role: "assistant", content: [pruneToolUse("toolu_A", "quoteA")] }, // 3 kept
       { role: "user", content: [pruneToolResult("toolu_A", "RULE_A")] }, // 4 kept
       { role: "user", content: "turn5" }, // 5 kept
       { role: "assistant", content: [{ type: "text", text: "quoteB" }] }, // 6 cut (range B)
-      { role: "user", content: "turn7" }, // 7 cut (range B)
+      { role: "user", content: "<system-reminder>turn7</system-reminder>" }, // 7 cut (not a real prompt: prompts are salvaged) (range B)
       { role: "assistant", content: [pruneToolUse("toolu_B", "quoteB")] }, // 8 kept
       { role: "user", content: [pruneToolResult("toolu_B", "RULE_B")] }, // 9 kept
       { role: "user", content: "turn10" }, // 10 kept
@@ -107,12 +107,12 @@ describe("rewriteMessages", () => {
     const messages = [
       { role: "user", content: "start task" }, // 0 kept -- survives both cuts
       { role: "assistant", content: [{ type: "text", text: "early note" }] }, // 1 cut (range C starts here)
-      { role: "user", content: "u2" }, // 2 cut
+      { role: "user", content: "<system-reminder>u2</system-reminder>" }, // 2 cut (not a real prompt: prompts are salvaged)
       { role: "assistant", content: [{ type: "text", text: "quoteA" }] }, // 3 cut
-      { role: "user", content: "u4" }, // 4 cut
+      { role: "user", content: "<system-reminder>u4</system-reminder>" }, // 4 cut (not a real prompt: prompts are salvaged)
       { role: "assistant", content: [pruneToolUse("toolu_A", "quoteA")] }, // 5 cut -- rule A's own anchor, swallowed by C
       { role: "user", content: [pruneToolResult("toolu_A", "RULE_A")] }, // 6 cut -- ditto
-      { role: "user", content: "u7" }, // 7 cut
+      { role: "user", content: "<system-reminder>u7</system-reminder>" }, // 7 cut (not a real prompt: prompts are salvaged)
       { role: "assistant", content: [pruneToolUse("toolu_C", "early note")] }, // 8 kept -- rule C's own anchor
       { role: "user", content: [pruneToolResult("toolu_C", "RULE_C")] }, // 9 kept
       { role: "user", content: "u10" }, // 10 kept
@@ -133,7 +133,7 @@ describe("rewriteMessages", () => {
     const messages = [
       { role: "user", content: "start" }, // 0 kept
       { role: "assistant", content: [{ type: "text", text: "validQuote" }] }, // 1 cut
-      { role: "user", content: "u2" }, // 2 cut
+      { role: "user", content: "<system-reminder>u2</system-reminder>" }, // 2 cut (not a real prompt: prompts are salvaged)
       { role: "assistant", content: [pruneToolUse("toolu_V", "validQuote")] }, // 3 kept
       { role: "user", content: [pruneToolResult("toolu_V", "RULE_VALID")] }, // 4 kept
       { role: "user", content: "u5" }, // 5 kept
@@ -166,7 +166,7 @@ describe("rewriteMessages", () => {
     const messages = [
       { role: "user", content: "start task" }, // 0 kept
       { role: "assistant", content: [{ type: "text", text: "reply1 is where garbage begins" }] }, // 1 cut
-      { role: "user", content: "turn2" }, // 2 cut
+      { role: "user", content: "<system-reminder>turn2</system-reminder>" }, // 2 cut (not a real prompt: prompts are salvaged)
       {
         role: "assistant",
         content: [pruneToolUse("toolu_prune1", "reply1 is where garbage begins", "mcp__mekiri-proxy__prune")],
@@ -198,7 +198,7 @@ describe("rewriteMessages", () => {
     const messages = [
       { role: "user", content: "start" }, // 0 kept
       { role: "assistant", content: [{ type: "text", text: "closed episode text" }] }, // 1 cut
-      { role: "user", content: "turn2" }, // 2 cut
+      { role: "user", content: "<system-reminder>turn2</system-reminder>" }, // 2 cut (not a real prompt: prompts are salvaged)
       { role: "assistant", content: [{ type: "text", text: "final report" }] }, // 3 kept -- must survive
       { role: "assistant", content: [pruneToolUse("toolu_X", "closed episode text")] }, // 4 kept (anchor)
       { role: "user", content: [pruneToolResult("toolu_X", "RULE_X")] }, // 5 kept
@@ -220,7 +220,7 @@ describe("rewriteMessages", () => {
     const messages = [
       { role: "user", content: "start" }, // 0 kept
       { role: "assistant", content: [{ type: "text", text: "closed episode text" }] }, // 1 cut
-      { role: "user", content: "turn2" }, // 2 cut
+      { role: "user", content: "<system-reminder>turn2</system-reminder>" }, // 2 cut (not a real prompt: prompts are salvaged)
       { role: "assistant", content: [{ type: "text", text: "final report" }] }, // 3 cut -- no flag, no protection
       { role: "assistant", content: [pruneToolUse("toolu_X", "closed episode text")] }, // 4 kept (anchor)
       { role: "user", content: [pruneToolResult("toolu_X", "RULE_X")] }, // 5 kept
@@ -237,7 +237,7 @@ describe("rewriteMessages", () => {
     const messages = [
       { role: "user", content: "start" }, // 0 kept
       { role: "assistant", content: [{ type: "text", text: "closed episode text" }] }, // 1 cut
-      { role: "user", content: "turn2" }, // 2 cut
+      { role: "user", content: "<system-reminder>turn2</system-reminder>" }, // 2 cut (not a real prompt: prompts are salvaged)
       {
         role: "assistant",
         content: [{ type: "text", text: "final report" }, pruneToolUse("toolu_M", "closed episode text")],
@@ -262,7 +262,7 @@ describe("rewriteMessages", () => {
       { role: "assistant", content: [{ type: "text", text: "final report" }] }, // 1 kept -- older, coincidental match, must be ignored
       { role: "user", content: "u1" }, // 2 kept
       { role: "assistant", content: [{ type: "text", text: "closed episode text" }] }, // 3 cut
-      { role: "user", content: "turn4" }, // 4 cut
+      { role: "user", content: "<system-reminder>turn4</system-reminder>" }, // 4 cut (not a real prompt: prompts are salvaged)
       { role: "assistant", content: [{ type: "text", text: "final report" }] }, // 5 kept -- the real, nearest report
       { role: "assistant", content: [pruneToolUse("toolu_Y", "closed episode text")] }, // 6 kept (anchor)
       { role: "user", content: [pruneToolResult("toolu_Y", "RULE_Y")] }, // 7 kept
@@ -318,5 +318,122 @@ describe("rewriteMessages", () => {
     const original = JSON.parse(JSON.stringify(messages));
     rewriteMessages(messages, [{ id: "RULE_M", matchQuote: "reply1" }]);
     expect(messages).toEqual(original);
+  });
+});
+
+function toolUse(id: string, description: string) {
+  return { type: "tool_use", id, name: "Bash", input: { command: "true", description } };
+}
+
+function toolResult(id: string) {
+  return { type: "tool_result", tool_use_id: id, content: "ok" };
+}
+
+function assertAlternates(messages: unknown[]) {
+  for (let i = 1; i < messages.length; i++) {
+    expect((messages[i] as { role: string }).role).not.toBe((messages[i - 1] as { role: string }).role);
+  }
+}
+
+function allText(message: unknown): string {
+  const content = (message as { content: unknown }).content;
+  if (typeof content === "string") return content;
+  return (content as { type: string; text?: string }[])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text)
+    .join("\n");
+}
+
+describe("rewriteMessages: prompts inside a cut range", () => {
+  it("carries the latest user prompt verbatim into the kept user message before the range", () => {
+    const messages = [
+      { role: "user", content: "first task" },
+      { role: "assistant", content: [toolUse("t1", "Start the episode")] },
+      { role: "user", content: [toolResult("t1")] },
+      { role: "assistant", content: [{ type: "text", text: "report" }] },
+      { role: "user", content: [{ type: "text", text: "second task, please" }] },
+      { role: "assistant", content: [pruneToolUse("p1", "Start the episode", "mcp__mekiri-proxy__prune")] },
+      { role: "user", content: [pruneToolResult("p1", "rule-1")] },
+    ];
+    const rules: RewriteRule[] = [{ id: "rule-1", matchQuote: "Start the episode" }];
+    const out = rewriteMessages(messages, rules);
+    expect(out).toHaveLength(3);
+    assertAlternates(out);
+    assertNoOrphanToolResults(out);
+    expect(allText(out[0])).toContain("first task");
+    expect(allText(out[0])).toContain("A user prompt that fell inside a range cut by prune");
+    expect(allText(out[0])).toContain("second task, please");
+    // The original array is not mutated.
+    expect(messages[0].content).toBe("first task");
+  });
+
+  it("keeps older swallowed prompts only as a stub pointing to the prompt log", () => {
+    const long = "older prompt ".repeat(60);
+    const messages = [
+      { role: "user", content: "root" },
+      { role: "assistant", content: [toolUse("t1", "Episode start")] },
+      { role: "user", content: [toolResult("t1")] },
+      { role: "assistant", content: [{ type: "text", text: "done" }] },
+      { role: "user", content: long },
+      { role: "assistant", content: [{ type: "text", text: "done again" }] },
+      { role: "user", content: "latest prompt" },
+      { role: "assistant", content: [pruneToolUse("p1", "Episode start")] },
+      { role: "user", content: [pruneToolResult("p1", "rule-1")] },
+    ];
+    const out = rewriteMessages(messages, [{ id: "rule-1", matchQuote: "Episode start" }]);
+    const text = allText(out[0]);
+    expect(text).toContain('graft("user#N")');
+    expect(text).toContain("…");
+    expect(text).not.toContain(long.trim());
+    expect(text).toContain("latest prompt");
+  });
+
+  it("does not salvage harness messages (Stop hook feedback, tool results)", () => {
+    const messages = [
+      { role: "user", content: "root" },
+      { role: "assistant", content: [toolUse("t1", "Episode start")] },
+      { role: "user", content: [toolResult("t1")] },
+      { role: "assistant", content: [{ type: "text", text: "report" }] },
+      { role: "user", content: [{ type: "text", text: "Stop hook feedback:\nprune now" }] },
+      { role: "assistant", content: [pruneToolUse("p1", "Episode start")] },
+      { role: "user", content: [pruneToolResult("p1", "rule-1")] },
+    ];
+    const out = rewriteMessages(messages, [{ id: "rule-1", matchQuote: "Episode start" }]);
+    expect(out[0]).toBe(messages[0]);
+  });
+});
+
+describe("rewriteMessages: several cuts inside one sprint", () => {
+  it("cuts closed episodes of a still-running sprint by tool descriptions, keeping pairs and alternation", () => {
+    const thinking = (t: string) => ({ type: "thinking", thinking: t, signature: "sig" });
+    const messages = [
+      { role: "user", content: "do the whole thing autonomously" },
+      { role: "assistant", content: [thinking("plan"), toolUse("a1", "Read the module")] },
+      { role: "user", content: [toolResult("a1")] },
+      { role: "assistant", content: [thinking("edit"), toolUse("a2", "Edit the module")] },
+      { role: "user", content: [toolResult("a2")] },
+      { role: "assistant", content: [thinking("close"), pruneToolUse("p1", "Read the module")] },
+      { role: "user", content: [pruneToolResult("p1", "rule-1")] },
+      { role: "assistant", content: [thinking("next"), toolUse("b1", "Run the tests")] },
+      { role: "user", content: [toolResult("b1")] },
+      { role: "assistant", content: [thinking("close again"), pruneToolUse("p2", "Run the tests")] },
+      { role: "user", content: [pruneToolResult("p2", "rule-2")] },
+      { role: "assistant", content: [thinking("go on"), toolUse("c1", "Commit")] },
+    ];
+    const rules: RewriteRule[] = [
+      { id: "rule-1", matchQuote: "Read the module" },
+      { id: "rule-2", matchQuote: "Run the tests" },
+    ];
+    const out = rewriteMessages(messages, rules);
+    assertAlternates(out);
+    assertNoOrphanToolResults(out);
+    const json = JSON.stringify(out);
+    expect(json).not.toContain("Read the module\"}}");
+    expect(json).not.toContain("Edit the module");
+    expect(json).not.toContain("\"Run the tests\"}");
+    expect(json).toContain("rule-1");
+    expect(json).toContain("rule-2");
+    expect(json).toContain("Commit");
+    expect(out).toHaveLength(6);
   });
 });

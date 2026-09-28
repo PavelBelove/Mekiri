@@ -219,9 +219,17 @@ const LAST_PROMPT_LABEL = "[Mekiri] The last user prompt before the reset, verba
 /** Applies the latest reset rule on top of the prune-excluded set. The
  *  prefix outside messages[] (system, tools) is untouched; messages[0]'s
  *  system-reminder blocks (CLAUDE.md and the like) are carried over. */
-export function applyReset(messages: unknown[], excluded: Set<number>, rule: ResetRule): unknown[] {
+export function applyReset(
+  messages: unknown[],
+  excluded: Set<number>,
+  rule: ResetRule,
+  /** Replacement messages by index (prompts salvaged from prune cuts). Hashes
+   *  are still matched against the originals, so an anchor stays findable. */
+  patched: Map<number, unknown> = new Map(),
+): unknown[] {
+  const pick = (m: unknown, i: number) => patched.get(i) ?? m;
   const keep = findByHash(messages, rule.keepFromHash, rule.keepFromOccurrence);
-  if (keep === undefined || keep === 0) return messages.filter((_, i) => !excluded.has(i));
+  if (keep === undefined || keep === 0) return messages.map(pick).filter((_, i) => !excluded.has(i));
 
   const injected: Block[] = blocksOf(messages[0])
     .filter((b) => b.type === "text" && typeof b.text === "string" && b.text.trimStart().startsWith("<system-reminder>"))
@@ -236,7 +244,7 @@ export function applyReset(messages: unknown[], excluded: Set<number>, rule: Res
     }
   }
 
-  const tail = messages.filter((_, i) => i >= keep && !excluded.has(i));
+  const tail = messages.map(pick).filter((_, i) => i >= keep && !excluded.has(i));
   const first = asMessage(tail[0]);
   if (first.role === "user") {
     return [{ role: "user", content: [...injected, ...blocksOf(first)] }, ...tail.slice(1)];
