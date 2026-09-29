@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { RawLine } from "mekiri-core";
+import { normalizedHash } from "./messageHash.js";
 import { resolveStateDir } from "./ruleStore.js";
 
 interface WireMessage {
@@ -24,11 +24,9 @@ function toRawLine(message: WireMessage, sessionId: string, index: number, revis
   };
 }
 
-function hashMessage(message: { role?: string; content?: unknown } | undefined): string {
-  return createHash("sha256")
-    .update(JSON.stringify({ role: message?.role, content: message?.content }))
-    .digest("hex");
-}
+// A revision line is for a real edit (an interrupt, a merged tool result),
+// not for Claude Code moving cache_control or collapsing blocks to a string.
+const hashMessage = normalizedHash;
 
 function parseTranscript(raw: string): RawLine[] {
   return raw

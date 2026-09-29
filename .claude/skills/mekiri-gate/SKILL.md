@@ -19,7 +19,11 @@ Verify this through `graft`, not by rewriting from scratch. Before telling the u
 
 ## `quote` boundary — a checkable rule, not a feeling
 
-`quote` must be a verbatim substring from a turn that has **already ended and returned control to the user**. It is never text you are still generating in the current, in-progress turn — that text is not yet written to the transcript on disk, no matter how confident it feels that "this was just said." If there's any doubt whether a turn has actually ended, treat it as not on disk yet.
+Terms: a **tact** is one API request (one assistant message plus the results of its tool calls); a **sprint** is the autonomous run from one user prompt to the next.
+
+`quote` must be a verbatim substring from a tact that has **already finished** — any earlier tact of the current sprint, or anything before it. Cutting in the middle of an autonomous sprint is allowed and expected: quote the start of the episode you're closing. The one thing that is never on disk yet is the **current tact** — the message holding this very `prune` call and any text written alongside it — no matter how confident it feels that "this was just said."
+
+The most robust quote is a parameter of an earlier tool call (a Bash `description`, a Read path): Claude Code does not persist text written between two thinking blocks, so a prose quote you clearly saw can still come back `not_found`.
 
 This matters most exactly when `prune` comes back `not_found`/`ambiguous`/`in_compacted_zone` under nudge-hook pressure with no valid quote in hand: that is not license to invent one. The `hint` field on that response points at the real answer — retry with `quote: ""` (see below) and put whatever's worth keeping in `kept_context`. That's a full, honest Mekiri call, not a lesser fallback: it counts and resets the nudge state exactly like a cutting `prune` does. Fabricating a plausible quote (or fabricated `fruit` content to go with it) is a worse failure than skipping the archive for that step — see [[feedback_mekiri_fruit_accuracy]] for a real incident of this going wrong.
 

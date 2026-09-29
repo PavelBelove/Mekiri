@@ -1,8 +1,11 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { readCapsule, recordDistillate } from "mekiri-core";
+import { readCapsule, recordDistillate, sessionReportPath } from "mekiri-core";
 import { recognizePrompt } from "./promptLog.js";
+import { normalizedHash, stripCacheControl } from "./messageHash.js";
 import { readShadowTranscriptOrNull } from "./shadowTranscript.js";
+
+export { normalizedHash };
 
 // Mekiri's replacement for Claude Code's auto-compaction -- see
 // docs/specs/2026-09-28-context-reset.md and docs/mechanics/context-reset.md.
@@ -17,9 +20,15 @@ export interface ResetRule {
   kind: "reset";
   /** normalizedHash of the first kept message: the tail starts there. */
   keepFromHash: string;
+  /** Which occurrence of keepFromHash (0-based, from the start) it is:
+   *  identical messages repeat (Stop-hook feedback, a short "ok"), and
+   *  Claude Code's history only grows at the end, so the ordinal is stable.
+   *  Absent in rules written before it existed: the last occurrence. */
+  keepFromOccurrence?: number;
   /** normalizedHash of the last user prompt, when it lies before the tail --
    *  its blocks are re-injected verbatim, attachments included. */
   lastPromptHash?: string;
+  lastPromptOccurrence?: number;
   /** Instruction + capsule snapshot, frozen at reset time so the injected
    *  message stays byte-identical (and cacheable) on every later request. */
   instruction: string;
@@ -60,27 +69,6 @@ export function isResetRule(rule: unknown): rule is ResetRule {
 
 // ---------------------------------------------------------------------------
 // Hashing and size estimate
-
-/** Claude Code moves cache_control markers between requests; strip them so a
- *  message hashes the same wherever it sits in the history. */
-function stripCacheControl(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripCacheControl);
-  if (typeof value === "object" && value !== null) {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) {
-      if (k !== "cache_control") out[k] = stripCacheControl(v);
-    }
-    return out;
-  }
-  return value;
-}
-
-export function normalizedHash(message: unknown): string {
-  const m = asMessage(message);
-  return createHash("sha256")
-    .update(JSON.stringify(stripCacheControl({ role: m.role, content: m.content })))
-    .digest("hex");
-}
 
 const IMAGE_TOKENS = 1600;
 
@@ -198,16 +186,32 @@ export function chooseCut(
 // ---------------------------------------------------------------------------
 // Applying a reset rule
 
-function findLastByHash(messages: unknown[], hash: string): number | undefined {
-  for (let i = messages.length - 1; i >= 0; i--) if (normalizedHash(messages[i]) === hash) return i;
+/** The `occurrence`-th message (0-based, from the start) with this hash;
+ *  without an ordinal, the last one. */
+function findByHash(messages: unknown[], hash: string, occurrence?: number): number | undefined {
+  if (occurrence === undefined) {
+    for (let i = messages.length - 1; i >= 0; i--) if (normalizedHash(messages[i]) === hash) return i;
+    return undefined;
+  }
+  let seen = 0;
+  for (let i = 0; i < messages.length; i++) {
+    if (normalizedHash(messages[i]) === hash && seen++ === occurrence) return i;
+  }
   return undefined;
+}
+
+function occurrenceAt(messages: unknown[], index: number): number {
+  const hash = normalizedHash(messages[index]);
+  let seen = 0;
+  for (let i = 0; i < index; i++) if (normalizedHash(messages[i]) === hash) seen++;
+  return seen;
 }
 
 /** Where the tail of the latest reset rule starts in `messages`, or 0. */
 export function currentResetStart(messages: unknown[], resetRules: ResetRule[]): number {
   const latest = resetRules[resetRules.length - 1];
   if (!latest) return 0;
-  return findLastByHash(messages, latest.keepFromHash) ?? 0;
+  return findByHash(messages, latest.keepFromHash, latest.keepFromOccurrence) ?? 0;
 }
 
 const LAST_PROMPT_LABEL = "[Mekiri] The last user prompt before the reset, verbatim:";
@@ -215,16 +219,24 @@ const LAST_PROMPT_LABEL = "[Mekiri] The last user prompt before the reset, verba
 /** Applies the latest reset rule on top of the prune-excluded set. The
  *  prefix outside messages[] (system, tools) is untouched; messages[0]'s
  *  system-reminder blocks (CLAUDE.md and the like) are carried over. */
-export function applyReset(messages: unknown[], excluded: Set<number>, rule: ResetRule): unknown[] {
-  const keep = findLastByHash(messages, rule.keepFromHash);
-  if (keep === undefined || keep === 0) return messages.filter((_, i) => !excluded.has(i));
+export function applyReset(
+  messages: unknown[],
+  excluded: Set<number>,
+  rule: ResetRule,
+  /** Replacement messages by index (prompts salvaged from prune cuts). Hashes
+   *  are still matched against the originals, so an anchor stays findable. */
+  patched: Map<number, unknown> = new Map(),
+): unknown[] {
+  const pick = (m: unknown, i: number) => patched.get(i) ?? m;
+  const keep = findByHash(messages, rule.keepFromHash, rule.keepFromOccurrence);
+  if (keep === undefined || keep === 0) return messages.map(pick).filter((_, i) => !excluded.has(i));
 
   const injected: Block[] = blocksOf(messages[0])
     .filter((b) => b.type === "text" && typeof b.text === "string" && b.text.trimStart().startsWith("<system-reminder>"))
     .map((b) => stripCacheControl(b) as Block);
   injected.push({ type: "text", text: rule.instruction });
   if (rule.lastPromptHash) {
-    const promptIdx = findLastByHash(messages, rule.lastPromptHash);
+    const promptIdx = findByHash(messages, rule.lastPromptHash, rule.lastPromptOccurrence);
     const recognized = promptIdx !== undefined && promptIdx < keep ? recognizePrompt(asMessage(messages[promptIdx])) : null;
     if (recognized) {
       injected.push({ type: "text", text: LAST_PROMPT_LABEL });
@@ -232,7 +244,7 @@ export function applyReset(messages: unknown[], excluded: Set<number>, rule: Res
     }
   }
 
-  const tail = messages.filter((_, i) => i >= keep && !excluded.has(i));
+  const tail = messages.map(pick).filter((_, i) => i >= keep && !excluded.has(i));
   const first = asMessage(tail[0]);
   if (first.role === "user") {
     return [{ role: "user", content: [...injected, ...blocksOf(first)] }, ...tail.slice(1)];
@@ -311,10 +323,10 @@ export async function createResetRule(args: CreateResetArgs): Promise<ResetRule 
   const id = randomUUID();
   const timestamp = (args.now ?? new Date()).toISOString();
 
-  let lastPromptHash: string | undefined;
+  let lastPromptIdx: number | undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
     if (recognizePrompt(asMessage(messages[i]))) {
-      if (i < choice.cut) lastPromptHash = normalizedHash(messages[i]);
+      if (i < choice.cut) lastPromptIdx = i;
       break;
     }
   }
@@ -329,7 +341,11 @@ export async function createResetRule(args: CreateResetArgs): Promise<ResetRule 
     // lines inside the kept tail can only push the end into the tail a bit.
     const rawEndLine = shadow ? shadow.length - (messages.length - choice.cut) : 0;
     if (shadow && rawEndLine >= 1) {
-      const dropped = choice.cut - (lastPrune === undefined ? 1 : lastPrune + 2);
+      // Only what this reset takes out: not the prefix an earlier reset
+      // already dropped, not messages a prune already cut.
+      const from = Math.max(lastPrune === undefined ? 1 : lastPrune + 2, minCut);
+      let dropped = 0;
+      for (let i = from; i < choice.cut; i++) if (!args.excluded.has(i)) dropped++;
       await recordDistillate(
         args.dir,
         {
@@ -356,13 +372,16 @@ export async function createResetRule(args: CreateResetArgs): Promise<ResetRule 
     id,
     kind: "reset",
     keepFromHash: normalizedHash(messages[choice.cut]),
-    ...(lastPromptHash ? { lastPromptHash } : {}),
+    keepFromOccurrence: occurrenceAt(messages, choice.cut),
+    ...(lastPromptIdx !== undefined
+      ? { lastPromptHash: normalizedHash(messages[lastPromptIdx]), lastPromptOccurrence: occurrenceAt(messages, lastPromptIdx) }
+      : {}),
     instruction: buildInstruction({
       estimate: args.estimate,
       capsule,
       recordRuleId,
       hasLibrary: args.dir !== undefined && capsule !== undefined && capsule.trim() !== "",
-      reportPath: args.dir ? path.join(args.dir, ".mekiri", "sessions", args.sessionId, "report.md") : undefined,
+      reportPath: args.dir ? await sessionReportPath(args.dir, args.sessionId) : undefined,
     }),
     createdAt: timestamp,
   };

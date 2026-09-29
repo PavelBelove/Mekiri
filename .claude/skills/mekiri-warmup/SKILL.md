@@ -28,7 +28,7 @@ When the conversation opens with `[Mekiri context reset]`, the warm-up target is
 ## The three-hop path
 
 1. **`.mekiri/sessions-index.md`** — one line per session, human-readable, appended in order, so its last line is always the most recently closed session on this project. Skim it to work out *which* sessions are relevant (by date, by summary text) — but treat the last line as a default candidate regardless of whether its summary sounds topically related: whatever the immediately preceding agent was doing is, with high likelihood, connected to why a new session just started on this project at all. Don't open every other session's capsule blind.
-2. **`capsule.md`** of each relevant session (via its `.mekiri/sessions/<date-slug>/` alias) — the table of contents of that session's `prune` calls, tagged `[kept]`/`[cut]`/`[kept+cut]`. Skim entries by summary to find candidates.
+2. **`capsule.md`** of each relevant session (in its `.mekiri/sessions/<date>-<slug>/` folder, named in `sessions-index.md`) — the table of contents of that session's `prune` calls, tagged `[kept]`/`[cut]`/`[kept+cut]`. Skim entries by summary to find candidates.
 3. **`report.md`** in the same folder — the actual distillate bodies. Read only the ranges that looked promising from `capsule.md`, not the whole file front to back — across a project's history it can be long, and most of it won't be about your current question.
 
 ## Correlating with git history

@@ -95,7 +95,7 @@ Practical application: if, after a rollback, a past reply the agent expected to 
 
 ## Where `fruit` physically goes
 
-The note is not appended to the transcript as a service block — it goes to the on-disk archive (`.mekiri/sessions/<id>/report.md` + `capsule.md`, project-wide index `.mekiri/capsule-index.jsonl`). Its body has up to two labeled sections, one for the kept side and one for the cut side, matching whichever of `kept_context` and the cut-side fields were non-empty in that call. This distillate is a plain file on disk — reachable by reading `report.md` directly once you know a range from `capsule.md`/`capsule-index.jsonl` — separate from what `graft` itself returns (the raw fragment, not this body).
+The note is not appended to the transcript as a service block — it goes to the on-disk archive (`.mekiri/sessions/<date>-<slug>/report.md` + `capsule.md`, project-wide index `.mekiri/capsule-index.jsonl`). Its body has up to two labeled sections, one for the kept side and one for the cut side, matching whichever of `kept_context` and the cut-side fields were non-empty in that call. This distillate is a plain file on disk — reachable by reading `report.md` directly once you know a range from `capsule.md`/`capsule-index.jsonl` — separate from what `graft` itself returns (the raw fragment, not this body).
 
 ## The archive as the project library
 

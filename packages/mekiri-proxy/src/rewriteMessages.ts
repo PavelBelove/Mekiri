@@ -13,8 +13,10 @@ export interface RewriteRule {
 
 import { contentContainsQuote } from "mekiri-core";
 import type { QuoteScope } from "mekiri-core";
-import { applyReset, isResetRule } from "./contextReset.js";
+import { applyReset, currentResetStart, isResetRule } from "./contextReset.js";
 import type { ResetRule } from "./contextReset.js";
+import { stripCacheControl } from "./messageHash.js";
+import { recognizePrompt } from "./promptLog.js";
 
 /** Everything stored per session in rules.json: prune cuts and context resets. */
 export type SessionRule = RewriteRule | ResetRule;
@@ -167,13 +169,80 @@ export function computeExcluded(messages: unknown[], rules: SessionRule[]): Set<
   return excluded;
 }
 
+// ---------------------------------------------------------------------------
+// Salvaging user prompts from cut ranges
+//
+// A prune quote can sit before a user prompt (the user interrupted, or the
+// agent quoted an earlier sprint), and then the range swallows the prompt.
+// The prompt log keeps it on disk, but the agent would lose what it was just
+// asked. So a real prompt inside a cut range is carried over into the nearest
+// kept user message before the range: the session's latest prompt verbatim,
+// older ones as a short stub pointing to the prompt log.
+
+const SALVAGED_LATEST_LABEL = "[Mekiri] A user prompt that fell inside a range cut by prune, kept verbatim:";
+const SALVAGED_STUB_HEAD_CHARS = 300;
+
+type Block = Record<string, unknown>;
+
+function blocksOf(message: unknown): Block[] {
+  const content = asMessage(message).content;
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  if (Array.isArray(content)) return content.filter((b): b is Block => typeof b === "object" && b !== null);
+  return [];
+}
+
+function salvagedBlocks(prompt: NonNullable<ReturnType<typeof recognizePrompt>>, latest: boolean): Block[] {
+  if (latest) {
+    return [{ type: "text", text: SALVAGED_LATEST_LABEL }, ...prompt.blocks.map((b) => stripCacheControl(b) as Block)];
+  }
+  const text = prompt.blocks
+    .map((b) => (b.type === "text" ? (b.text ?? "") : `[${b.type}]`))
+    .join("\n")
+    .trim();
+  const head = text.length > SALVAGED_STUB_HEAD_CHARS ? `${text.slice(0, SALVAGED_STUB_HEAD_CHARS)}…` : text;
+  return [
+    {
+      type: "text",
+      text: `[Mekiri] An earlier user prompt fell inside a range cut by prune (full text: its [user #N] line in capsule.md, graft("user#N")): «${head}»`,
+    },
+  ];
+}
+
+/** Replacement messages, by index, that carry prompts out of `excluded`.
+ *  Nothing below `floor` (a reset's tail start) is used as a target. */
+export function salvagePrompts(messages: unknown[], excluded: Set<number>, floor = 0): Map<number, unknown> {
+  const patched = new Map<number, unknown>();
+  if (excluded.size === 0) return patched;
+  let latestPrompt = -1;
+  for (let i = messages.length - 1; i >= 0 && latestPrompt < 0; i--) {
+    if (recognizePrompt(asMessage(messages[i]))) latestPrompt = i;
+  }
+  const isTarget = (j: number) => !excluded.has(j) && asMessage(messages[j]).role === "user";
+  for (let i = floor; i < messages.length; i++) {
+    if (!excluded.has(i)) continue;
+    const prompt = recognizePrompt(asMessage(messages[i]));
+    if (!prompt) continue;
+    let target = -1;
+    for (let j = i - 1; j >= floor && target < 0; j--) if (isTarget(j)) target = j;
+    for (let j = i + 1; j < messages.length && target < 0; j++) if (isTarget(j)) target = j;
+    if (target < 0) continue;
+    const base = patched.get(target) ?? messages[target];
+    patched.set(target, { ...asMessage(base), content: [...blocksOf(base), ...salvagedBlocks(prompt, i === latestPrompt)] });
+  }
+  return patched;
+}
+
 export function rewriteMessages(messages: unknown[], rules: SessionRule[] | undefined): unknown[] {
   if (!rules || rules.length === 0) return messages;
   const excluded = computeExcluded(messages, rules);
   // Prune cuts first, then the latest reset on top: a prune range that spans
   // the reset boundary still cuts its part of the kept tail.
   const resets = rules.filter(isResetRule);
-  if (resets.length > 0) return applyReset(messages, excluded, resets[resets.length - 1]);
+  if (resets.length > 0) {
+    const patched = salvagePrompts(messages, excluded, currentResetStart(messages, resets));
+    return applyReset(messages, excluded, resets[resets.length - 1], patched);
+  }
   if (excluded.size === 0) return messages;
-  return messages.filter((_, i) => !excluded.has(i));
+  const patched = salvagePrompts(messages, excluded);
+  return messages.map((m, i) => patched.get(i) ?? m).filter((_, i) => !excluded.has(i));
 }

@@ -108,7 +108,7 @@ describe("daemon", () => {
       messages: [
         { role: "user", content: "old turn" },
         { role: "assistant", content: [{ type: "text", text: "old reply text" }] },
-        { role: "user", content: "middle turn" },
+        { role: "user", content: "<system-reminder>middle turn</system-reminder>" },
         {
           role: "assistant",
           content: [{ type: "tool_use", id: "toolu_1", name: "prune", input: { quote: "old reply text" } }],
@@ -158,7 +158,7 @@ describe("daemon", () => {
       messages: [
         { role: "user", content: "turn0" },
         { role: "assistant", content: [{ type: "text", text: "quoteA" }] },
-        { role: "user", content: "turn2" },
+        { role: "user", content: "<system-reminder>turn2</system-reminder>" },
         {
           role: "assistant",
           content: [{ type: "tool_use", id: "toolu_a", name: "prune", input: { quote: "quoteA" } }],
@@ -171,7 +171,7 @@ describe("daemon", () => {
         },
         { role: "user", content: "turn5" },
         { role: "assistant", content: [{ type: "text", text: "quoteB" }] },
-        { role: "user", content: "turn7" },
+        { role: "user", content: "<system-reminder>turn7</system-reminder>" },
         {
           role: "assistant",
           content: [{ type: "tool_use", id: "toolu_b", name: "prune", input: { quote: "quoteB" } }],
@@ -259,7 +259,7 @@ describe("daemon", () => {
       messages: [
         { role: "user", content: "old turn" },
         { role: "assistant", content: [{ type: "text", text: "old reply text" }] },
-        { role: "user", content: "middle turn" },
+        { role: "user", content: "<system-reminder>middle turn</system-reminder>" },
         {
           role: "assistant",
           content: [{ type: "tool_use", id: "toolu_shadow", name: "prune", input: { quote: "old reply text" } }],

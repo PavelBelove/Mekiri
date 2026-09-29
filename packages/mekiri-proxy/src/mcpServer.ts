@@ -71,13 +71,11 @@ function renderDistillate(noteType: NoteType, fruit: PortalFruit | DeathReloadFr
   return parts.join("\n");
 }
 
-/** `fruit.conclusion`, trimmed and collapsed to a single line, truncated to
- *  ~80 chars as a defensive cap (not the primary truncation mechanism -- the
- *  agent is expected to already write a short label) -- used as the
- *  human-readable label in capsule.md. */
+/** `fruit.conclusion`, trimmed and collapsed to a single line -- used as the
+ *  human-readable label in capsule.md. Never shortened: the agent is expected
+ *  to already write a short label, and a cut mid-word loses meaning. */
 function deriveHeader(fruit: PortalFruit | DeathReloadFruit): string {
-  const firstLine = fruit.conclusion.split(/\r?\n/)[0].trim();
-  return firstLine.length > 80 ? firstLine.slice(0, 80) : firstLine;
+  return fruit.conclusion.split(/\r?\n/)[0].trim();
 }
 
 interface PruneArgs {
@@ -114,9 +112,11 @@ const NOT_FOUND_HINT =
   "текст, написанный между двумя блоками размышлений (thinking -> текст -> thinking -> вызов тулзы), -- " +
   "ты его видел, но в истории его нет. Тогда процитируй то, что сохраняется на той же границе: " +
   "параметр вызова тулзы (например, description у Bash) или финальный отчёт хода. " +
+  "Вторая причина: цитата из текущего такта -- из того же сообщения, где стоит этот вызов prune; " +
+  "он ещё не записан. Прошлые такты этого же спринта цитировать можно -- возьми description " +
+  "одного из предыдущих вызовов тулз, которым начинался закрываемый эпизод. " +
   "Если резать реально нечего прямо сейчас " +
-  "(например, цитата — из ещё не завершённого текущего хода, который физически не мог успеть " +
-  "записаться на диск) — вызови prune с quote: \"\" и опиши то, что стоит сохранить, в kept_context. " +
+  "— вызови prune с quote: \"\" и опиши то, что стоит сохранить, в kept_context. " +
   "Это полноценный вызов Mekiri-тулзы, засчитывается и сбрасывает счётчик напоминаний хука. " +
   "Никогда не изобретай цитату, которой не было.";
 const AMBIGUOUS_HINT =
@@ -167,6 +167,11 @@ export interface GraftImage {
 
 // Images above this are listed by path instead of inlined.
 const GRAFT_IMAGE_BYTE_LIMIT = 5 * 1024 * 1024;
+// An inlined image costs the caller ~1600 tokens whatever its byte size (the
+// same flat estimate contextReset uses); it counts against
+// RAW_CONTENT_CHAR_LIMIT at this many chars, so a range of screenshot-heavy
+// prompts can't bypass the limit. Images past the budget are listed by path.
+const GRAFT_IMAGE_CHAR_COST = 5000;
 
 type GraftResult =
   | { status: "ok"; mode: "toc"; content: string }
@@ -462,7 +467,10 @@ export function createToolHandlers(context: McpServerContext) {
           const attachmentLines: string[] = [];
           const promptImages: GraftImage[] = [];
           for (const a of prompt.attachments) {
-            if (a.mediaType.startsWith("image/") && a.bytes <= GRAFT_IMAGE_BYTE_LIMIT) {
+            const imageFits =
+              (blocks.length === 0 && promptImages.length === 0) ||
+              used + (promptImages.length + 1) * GRAFT_IMAGE_CHAR_COST <= RAW_CONTENT_CHAR_LIMIT;
+            if (a.mediaType.startsWith("image/") && a.bytes <= GRAFT_IMAGE_BYTE_LIMIT && imageFits) {
               const data = await fs.readFile(a.path).catch(() => null);
               if (data) {
                 promptImages.push({ prompt: n, file: a.file, mediaType: a.mediaType, data: data.toString("base64") });
@@ -487,7 +495,7 @@ export function createToolHandlers(context: McpServerContext) {
           }
           blocks.push(block);
           images.push(...promptImages);
-          used += block.length;
+          used += block.length + promptImages.length * GRAFT_IMAGE_CHAR_COST;
         }
         if (blocks.length === 0) return { status: "not_found" };
         const content = blocks.join("\n\n");
