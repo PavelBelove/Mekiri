@@ -16,7 +16,7 @@ If context is the working definition of an agent's identity for the duration of 
 
 ### Layer 1 — Navigation: `sessions-index.md` + `capsule.md`
 
-The coarsest layer, and the cheapest to read. `.mekiri/sessions-index.md` is a one-line-per-session overview of the whole project — alias, time range, how many entries were cut vs. kept, a short summary of the first entry — cheap regardless of how old the project is, the entry point for deciding *which* past sessions are even worth looking at. It's a constantly-updated index, not a snapshot taken at some past point: every session appends its own line when it writes its first entry, so the file an agent reads is always current as of the last `prune` call anyone made on the project, including ones from minutes ago. Each session's own `capsule.md` is its table of contents: one line per `prune` call, `rule_id`, tagged `[kept]` / `[cut]` / `[kept+cut]`. Neither file holds the actual content — both exist purely so an agent (or a human) can decide where to look next without reading anything line by line.
+The coarsest layer, and the cheapest to read. `.mekiri/sessions-index.md` is a one-line-per-session overview of the whole project — session folder name, session id, local time range, how many entries were cut vs. kept, a short summary of the first entry — cheap regardless of how old the project is, the entry point for deciding *which* past sessions are even worth looking at. It's a constantly-updated index, not a snapshot taken at some past point: every session appends its own line when it writes its first entry, so the file an agent reads is always current as of the last `prune` call anyone made on the project, including ones from minutes ago. Each session's own `capsule.md` is its table of contents: one line per `prune` call, `rule_id`, tagged `[kept]` / `[cut]` / `[kept+cut]`. Neither file holds the actual content — both exist purely so an agent (or a human) can decide where to look next without reading anything line by line.
 
 ### Layer 2 — Understanding: `report.md`
 
@@ -69,10 +69,11 @@ The archive's storage cost is close to zero: it's a growing set of flat files on
   sessions-index.md            # Layer 1 — human overview, one line per session
   capsule-index.jsonl          # machine-only, project-wide, one line per prune call
   sessions/
-    <session_id>/
+    <date>-<slug>/               # named after the session's first prune header
+      .session-id               # the Claude Code session_id this folder belongs to
       capsule.md                # Layer 1 — this session's table of contents
       report.md                 # Layer 2 — this session's distillate bodies
-    <date>-<slug>/               # human-readable alias (symlink) to <session_id>/
+    pending-<session_id>/        # a session with prompts recorded but no prune yet
 
 ~/.mekiri-proxy/                 # outside the project, per user
   raw-transcripts/<session_id>.jsonl   # shadow transcript -- graft(rule_id) reads this
@@ -80,4 +81,4 @@ The archive's storage cost is close to zero: it's a growing set of flat files on
     index.jsonl  001.md  001-1.png  ...
 ```
 
-`session_id` is the Claude Code transcript ID and can't be renamed; the `<date>-<slug>` alias is a navigation convenience on top of it, not a replacement for addressing by `rule_id`. See [prune-and-graft.md](prune-and-graft.md) for how `fruit` gets written in the first place, and the `mekiri-warmup` skill for the read path a session actually follows when it needs to use this.
+Folders are named by meaning, not by ID, so a human or an agent browsing the library sees what each session was about straight from `ls`; `session_id` (the Claude Code transcript ID) lives in each folder's `.session-id` marker and in `sessions-index.md`, and `rule_id` stays the address for `graft`. Human-facing times (`sessions-index.md`, folder dates, capsule `[user #N]` lines) are local; machine data (`capsule-index.jsonl`, `report.md` meta lines) is ISO UTC. See [prune-and-graft.md](prune-and-graft.md) for how `fruit` gets written in the first place, and the `mekiri-warmup` skill for the read path a session actually follows when it needs to use this.

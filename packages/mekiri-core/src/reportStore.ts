@@ -20,12 +20,86 @@ function sessionsDirPath(dir: string): string {
   return path.join(dir, ".mekiri", "sessions");
 }
 
-function sessionReportPath(dir: string, sessionId: string): string {
-  return path.join(dir, ".mekiri", "sessions", sessionId, "report.md");
+/** Marker file inside every session folder holding that session's full id --
+ *  the folder name itself is semantic (`<date>-<slug>`), so this marker is
+ *  the only link from a sessionId back to its folder. */
+const SESSION_ID_MARKER_FILENAME = ".session-id";
+/** Folder name prefix for a session that has recorded prompts but no prune
+ *  yet -- there is no header to name it by until the first distillate. */
+const PENDING_PREFIX = "pending-";
+
+const sessionDirCache = new Map<string, string>();
+
+async function isDirectory(p: string): Promise<boolean> {
+  try {
+    return (await fs.lstat(p)).isDirectory();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
 }
 
-function sessionCapsulePath(dir: string, sessionId: string): string {
-  return path.join(dir, ".mekiri", "sessions", sessionId, "capsule.md");
+/** Converts the pre-2026-09 layout (`sessions/<sessionId>/` plus a
+ *  `<date>-<slug>` symlink recorded in `.alias`) in place: the symlink goes,
+ *  the real folder takes the alias name (or a pending name if it never got
+ *  one), and a `.session-id` marker replaces `.alias`. */
+async function migrateLegacySessionDir(sessionsDir: string, sessionId: string): Promise<string | undefined> {
+  const legacyDir = path.join(sessionsDir, sessionId);
+  if (!(await isDirectory(legacyDir))) return undefined;
+  const alias = (await readFileIfExists(path.join(legacyDir, ALIAS_MARKER_FILENAME))).trim();
+  const name = alias || PENDING_PREFIX + sessionId;
+  if (alias) {
+    const linkPath = path.join(sessionsDir, alias);
+    const linkStat = await fs.lstat(linkPath).catch(() => undefined);
+    if (linkStat?.isSymbolicLink()) await fs.unlink(linkPath);
+  }
+  const target = path.join(sessionsDir, name);
+  await fs.rename(legacyDir, target);
+  await fs.writeFile(path.join(target, SESSION_ID_MARKER_FILENAME), sessionId, "utf8");
+  await fs.rm(path.join(target, ALIAS_MARKER_FILENAME), { force: true });
+  return target;
+}
+
+async function findSessionDir(dir: string, sessionId: string): Promise<string | undefined> {
+  const sessionsDir = sessionsDirPath(dir);
+  const key = path.resolve(sessionsDir) + "\0" + sessionId;
+  const cached = sessionDirCache.get(key);
+  if (cached && (await readFileIfExists(path.join(cached, SESSION_ID_MARKER_FILENAME))).trim() === sessionId) return cached;
+  sessionDirCache.delete(key);
+
+  let found = await migrateLegacySessionDir(sessionsDir, sessionId);
+  if (!found) {
+    const entries = await fs.readdir(sessionsDir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const candidate = path.join(sessionsDir, entry.name);
+      if ((await readFileIfExists(path.join(candidate, SESSION_ID_MARKER_FILENAME))).trim() === sessionId) {
+        found = candidate;
+        break;
+      }
+    }
+  }
+  if (found) sessionDirCache.set(key, found);
+  return found;
+}
+
+/** The session's folder, created under a pending name if it doesn't exist
+ *  yet (the first prune renames it via nameSessionDir). */
+async function ensureSessionDir(dir: string, sessionId: string): Promise<string> {
+  const existing = await findSessionDir(dir, sessionId);
+  if (existing) return existing;
+  const created = path.join(sessionsDirPath(dir), PENDING_PREFIX + sessionId);
+  await fs.mkdir(created, { recursive: true });
+  await fs.writeFile(path.join(created, SESSION_ID_MARKER_FILENAME), sessionId, "utf8");
+  return created;
+}
+
+/** Path to a session's report.md, or undefined if the session has no folder
+ *  yet. Exported so callers outside this module (context-reset instructions)
+ *  point at the real, semantically named folder. */
+export async function sessionReportPath(dir: string, sessionId: string): Promise<string | undefined> {
+  const found = await findSessionDir(dir, sessionId);
+  return found ? path.join(found, "report.md") : undefined;
 }
 
 const CYRILLIC_TRANSLIT: Record<string, string> = {
@@ -37,7 +111,9 @@ const CYRILLIC_TRANSLIT: Record<string, string> = {
 
 /** ASCII kebab-case slug for a session-alias folder name. Cyrillic (mekiri's
  *  fruit headers are typically Russian) is transliterated rather than
- *  dropped, so the alias stays recognizable instead of collapsing to "session". */
+ *  dropped, so the alias stays recognizable instead of collapsing to "session".
+ *  Not shortened for readability -- the only cap is a filesystem guard well
+ *  under NAME_MAX, cut back to a whole word. */
 export function slugify(text: string): string {
   const translit = text
     .toLowerCase()
@@ -47,42 +123,47 @@ export function slugify(text: string): string {
   return translit
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 40)
-    .replace(/-+$/g, "");
+    .replace(/^(.{0,200})-.*$/s, (whole, head) => (whole.length > 200 ? head : whole))
+    .slice(0, 200);
 }
 
-/** Creates a human-readable symlink alias (`.mekiri/sessions/<date>-<slug>`)
- *  pointing at the real `.mekiri/sessions/<sessionId>` directory, without
- *  touching sessionId-keyed addressing anywhere else. Idempotent per session
- *  via a `.alias` marker file, so repeat calls in the same session are cheap
- *  and don't create multiple symlinks. */
-export async function ensureSessionAlias(dir: string, sessionId: string, header: string, timestamp: string): Promise<string> {
+/** Local-time `YYYY-MM-DD HH:MM` for the human-readable library files
+ *  (sessions-index.md, alias dates), so they read on the same clock as the
+ *  capsule's `[user #N]` lines and `git log`. Machine data (capsule-index.jsonl,
+ *  report.md meta lines) stays ISO UTC. */
+export function formatLocalDateTime(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Gives the session folder its semantic name `<date>-<slug>` (from the
+ *  first prune's header), renaming it out of its pending name. Idempotent:
+ *  a folder that already has a real name keeps it. Returns the folder name. */
+export async function nameSessionDir(dir: string, sessionId: string, header: string, timestamp: string): Promise<string> {
   const sessionsDir = sessionsDirPath(dir);
-  const sessionDir = path.join(sessionsDir, sessionId);
-  const markerPath = path.join(sessionDir, ALIAS_MARKER_FILENAME);
+  const current = await ensureSessionDir(dir, sessionId);
+  if (!path.basename(current).startsWith(PENDING_PREFIX)) return path.basename(current);
 
-  const existing = await readFileIfExists(markerPath);
-  if (existing) return existing.trim();
-
-  await fs.mkdir(sessionDir, { recursive: true });
-
-  const datePart = timestamp.slice(0, 10);
+  const datePart = formatLocalDateTime(timestamp).slice(0, 10);
   const slugBase = slugify(header) || "session";
 
-  let alias = `${datePart}-${slugBase}`;
+  let name = `${datePart}-${slugBase}`;
   let suffix = 2;
   for (;;) {
+    const target = path.join(sessionsDir, name);
     try {
-      await fs.symlink(sessionId, path.join(sessionsDir, alias), "dir");
-      break;
+      // mkdir as an atomic claim on the name; rename then replaces the
+      // empty directory (allowed by POSIX rename for directories).
+      await fs.mkdir(target);
+      await fs.rename(current, target);
+      sessionDirCache.set(path.resolve(sessionsDir) + "\0" + sessionId, target);
+      return name;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      alias = `${datePart}-${slugBase}-${suffix++}`;
+      name = `${datePart}-${slugBase}-${suffix++}`;
     }
   }
-
-  await fs.writeFile(markerPath, alias, "utf8");
-  return alias;
 }
 
 /** Regenerates the human-readable `.mekiri/sessions-index.md`: one line per
@@ -101,7 +182,6 @@ export async function writeSessionsIndex(dir: string): Promise<void> {
     bySession.set(entry.sessionId, list);
   }
 
-  const sessionsDir = sessionsDirPath(dir);
   const rows: string[] = [];
   const sessions = [...bySession.entries()].map(([sessionId, list]) => {
     const sorted = [...list].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -118,11 +198,11 @@ export async function writeSessionsIndex(dir: string): Promise<void> {
     // fall back to [] rather than crash on old capsule-index.jsonl data.
     const cutCount = sorted.filter((e) => (e.parts ?? []).includes("cut")).length;
     const keptCount = sorted.filter((e) => (e.parts ?? []).includes("kept")).length;
-    const aliasMarker = await readFileIfExists(path.join(sessionsDir, sessionId, ALIAS_MARKER_FILENAME));
-    const alias = aliasMarker.trim() || sessionId;
+    const folder = await findSessionDir(dir, sessionId);
+    const name = folder ? path.basename(folder) : sessionId;
     const row =
-      "- **" + alias + "** (" + sessionId + ") " +
-      first.timestamp + " to " + last.timestamp + ", " +
+      "- **" + name + "/** (" + sessionId + ") " +
+      formatLocalDateTime(first.timestamp) + " to " + formatLocalDateTime(last.timestamp) + ", " +
       cutCount + " cut / " + keptCount + " kept " +
       String.fromCharCode(0x2014) + " " + first.header;
     rows.push(row);
@@ -130,7 +210,7 @@ export async function writeSessionsIndex(dir: string): Promise<void> {
 
   const introText =
     "# Sessions" + nl + nl +
-    "One line per session. Full detail lives in the session own capsule.md/report.md (open via the alias folder below)." + nl + nl;
+    "One line per session: folder under .mekiri/sessions/, (session id), local time span, counts, first header. Each folder holds that session's capsule.md (table of contents) and report.md (distillates)." + nl + nl;
   const content = introText + rows.join(nl) + nl;
   await fs.writeFile(path.join(dir, SESSIONS_INDEX_RELATIVE_PATH), content, "utf8");
 }
@@ -260,8 +340,8 @@ export async function recordDistillate(
       }
     }
 
-    const reportPath = sessionReportPath(dir, meta.sessionId);
-    await fs.mkdir(path.dirname(reportPath), { recursive: true });
+    const sessionDir = await ensureSessionDir(dir, meta.sessionId);
+    const reportPath = path.join(sessionDir, "report.md");
 
     const existingRaw = await readFileIfExists(reportPath);
     const startLine = splitLines(existingRaw).length + 1;
@@ -279,8 +359,7 @@ export async function recordDistillate(
     const blockLineCount = splitLines(block).length;
     const endLine = startLine + blockLineCount - 1;
 
-    const capsulePath = sessionCapsulePath(dir, meta.sessionId);
-    await fs.mkdir(path.dirname(capsulePath), { recursive: true });
+    const capsulePath = path.join(sessionDir, "capsule.md");
     const partsLabel = meta.parts.length === 2 ? "kept+cut" : meta.parts[0];
     const capsuleLine =
       "«" + header + "» " + startLine + "-" + endLine + " — [" + partsLabel + "] " + meta.ruleId + "\n";
@@ -300,7 +379,7 @@ export async function recordDistillate(
     };
     await fs.appendFile(indexPath, `${JSON.stringify(indexEntry)}\n`, "utf8");
 
-    await ensureSessionAlias(dir, meta.sessionId, header, meta.timestamp);
+    await nameSessionDir(dir, meta.sessionId, header, meta.timestamp);
     await writeSessionsIndex(dir);
 
     return {
@@ -314,8 +393,8 @@ export async function recordDistillate(
 }
 
 export async function readReportRange(dir: string, sessionId: string, startLine: number, endLine: number): Promise<string> {
-  const reportPath = sessionReportPath(dir, sessionId);
-  const raw = await readFileIfExists(reportPath);
+  const reportPath = await sessionReportPath(dir, sessionId);
+  const raw = reportPath ? await readFileIfExists(reportPath) : "";
   const lines = splitLines(raw);
   return lines.slice(startLine - 1, endLine).join("\n");
 }
@@ -325,8 +404,8 @@ export async function readReportRange(dir: string, sessionId: string, startLine:
  *  sessions have ever touched this project; browsing other sessions' entries
  *  goes through `findCapsuleEntry` (project-wide) by `ruleId` instead. */
 export async function readCapsule(dir: string, sessionId: string): Promise<string> {
-  const capsulePath = sessionCapsulePath(dir, sessionId);
-  return readFileIfExists(capsulePath);
+  const found = await findSessionDir(dir, sessionId);
+  return found ? readFileIfExists(path.join(found, "capsule.md")) : "";
 }
 
 export async function findCapsuleEntry(dir: string, ruleId: string): Promise<CapsuleIndexEntry | undefined> {
@@ -359,8 +438,7 @@ export async function recordPromptLines(dir: string, sessionId: string, prompts:
     const fresh = [...prompts].sort((a, b) => a.n - b.n).filter((p) => !recorded.has(p.n));
     if (fresh.length === 0) return [];
 
-    const capsulePath = sessionCapsulePath(dir, sessionId);
-    await fs.mkdir(path.dirname(capsulePath), { recursive: true });
+    const capsulePath = path.join(await ensureSessionDir(dir, sessionId), "capsule.md");
     await fs.appendFile(capsulePath, fresh.map((p) => p.line + "\n").join(""), "utf8");
     const timestamp = new Date().toISOString();
     const entries = fresh.map((p): PromptCapsuleEntry => ({ event: "prompt", sessionId, n: p.n, timestamp }));

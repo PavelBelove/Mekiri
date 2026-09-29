@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { readCapsule, recordDistillate } from "mekiri-core";
+import { readCapsule, recordDistillate, sessionReportPath } from "mekiri-core";
 import { recognizePrompt } from "./promptLog.js";
 import { normalizedHash, stripCacheControl } from "./messageHash.js";
 import { readShadowTranscriptOrNull } from "./shadowTranscript.js";
@@ -381,7 +381,7 @@ export async function createResetRule(args: CreateResetArgs): Promise<ResetRule 
       capsule,
       recordRuleId,
       hasLibrary: args.dir !== undefined && capsule !== undefined && capsule.trim() !== "",
-      reportPath: args.dir ? path.join(args.dir, ".mekiri", "sessions", args.sessionId, "report.md") : undefined,
+      reportPath: args.dir ? await sessionReportPath(args.dir, args.sessionId) : undefined,
     }),
     createdAt: timestamp,
   };

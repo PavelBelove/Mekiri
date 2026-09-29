@@ -895,7 +895,7 @@ describe("user prompts: capsule lines and graft", () => {
     await handlers.prune({ quote: "", note_type: "portal", fruit, keep_code: false });
     await handlers.prune({ quote: "", note_type: "portal", fruit: { ...fruit, conclusion: "second" }, keep_code: false });
 
-    const capsule = await fsp.readFile(path.join(projectDir, ".mekiri", "sessions", "s1", "capsule.md"), "utf8");
+    const capsule = await (await import("mekiri-core")).readCapsule(projectDir, "s1");
     const lines = capsule.trimEnd().split("\n");
     expect(lines[0]).toMatch(/^\[user #1\] \d\d:\d\d · \d+ B · speech — graft\("user#1"\)$/);
     expect(lines[1]).toContain("[user #2]");

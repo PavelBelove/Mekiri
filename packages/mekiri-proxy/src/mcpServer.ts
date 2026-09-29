@@ -71,13 +71,11 @@ function renderDistillate(noteType: NoteType, fruit: PortalFruit | DeathReloadFr
   return parts.join("\n");
 }
 
-/** `fruit.conclusion`, trimmed and collapsed to a single line, truncated to
- *  ~80 chars as a defensive cap (not the primary truncation mechanism -- the
- *  agent is expected to already write a short label) -- used as the
- *  human-readable label in capsule.md. */
+/** `fruit.conclusion`, trimmed and collapsed to a single line -- used as the
+ *  human-readable label in capsule.md. Never shortened: the agent is expected
+ *  to already write a short label, and a cut mid-word loses meaning. */
 function deriveHeader(fruit: PortalFruit | DeathReloadFruit): string {
-  const firstLine = fruit.conclusion.split(/\r?\n/)[0].trim();
-  return firstLine.length > 80 ? firstLine.slice(0, 80) : firstLine;
+  return fruit.conclusion.split(/\r?\n/)[0].trim();
 }
 
 interface PruneArgs {

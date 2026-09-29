@@ -9,7 +9,8 @@ import {
   readReportRange,
   readCapsule,
   findCapsuleEntry,
-  ensureSessionAlias,
+  nameSessionDir,
+  sessionReportPath,
   writeSessionsIndex,
   slugify,
   type ReportEntryMeta,
@@ -57,8 +58,9 @@ describe("reportStore", () => {
     expect(startLine).toBe(1);
     expect(endLine).toBe(4);
 
-    const reportPath = path.join(dir, ".mekiri", "sessions", "session-1", "report.md");
-    const capsulePath = path.join(dir, ".mekiri", "sessions", "session-1", "capsule.md");
+    const reportPath = (await sessionReportPath(dir, "session-1"))!;
+    expect(path.basename(path.dirname(reportPath))).toMatch(/^\d{4}-\d\d-\d\d-first-header$/);
+    const capsulePath = path.join(path.dirname(reportPath), "capsule.md");
     const indexPath = path.join(dir, ".mekiri", "capsule-index.jsonl");
 
     const reportRaw = await fs.readFile(reportPath, "utf8");
@@ -260,7 +262,7 @@ describe("reportStore", () => {
       const entry = await findCapsuleEntry(dir, "rule-1");
       expect(entry?.activityLog).toBe("Read×1(/x/a.md), Edit×1(/x/a.md), Bash×1(npm test)");
 
-      const reportRaw = await fs.readFile(path.join(dir, ".mekiri", "sessions", "session-1", "report.md"), "utf8");
+      const reportRaw = await fs.readFile((await sessionReportPath(dir, "session-1"))!, "utf8");
       expect(reportRaw).toContain("Activity: Read×1(/x/a.md), Edit×1(/x/a.md), Bash×1(npm test)");
     });
 
@@ -273,7 +275,7 @@ describe("reportStore", () => {
       const entry = await findCapsuleEntry(dir, "rule-1");
       expect(entry?.activityLog).toBe("");
 
-      const reportRaw = await fs.readFile(path.join(dir, ".mekiri", "sessions", "session-1", "report.md"), "utf8");
+      const reportRaw = await fs.readFile((await sessionReportPath(dir, "session-1"))!, "utf8");
       expect(reportRaw).toContain("Activity: \n");
     });
 
@@ -311,7 +313,7 @@ describe("reportStore", () => {
       const entry = await findCapsuleEntry(dir, "rule-1");
       expect(entry?.activityLog).toBeUndefined();
 
-      const reportRaw = await fs.readFile(path.join(dir, ".mekiri", "sessions", "session-1", "report.md"), "utf8");
+      const reportRaw = await fs.readFile((await sessionReportPath(dir, "session-1"))!, "utf8");
       expect(reportRaw).not.toContain("Activity:");
     });
 
@@ -325,39 +327,72 @@ describe("reportStore", () => {
   });
 
   describe("slugify", () => {
-    it("transliterates Cyrillic to ascii kebab-case and truncates", () => {
+    it("transliterates Cyrillic to ascii kebab-case without shortening it", () => {
       expect(slugify("Изучена структура репозитория")).toBe("izuchena-struktura-repozitoriya");
       expect(slugify("Hello, World!!!")).toBe("hello-world");
-      expect(slugify("a".repeat(60))).toHaveLength(40);
+      const long = "слово ".repeat(15).trim();
+      expect(slugify(long)).toBe(Array(15).fill("slovo").join("-"));
+      // filesystem guard only: cut back to a whole word under 200 chars
+      const huge = slugify("word ".repeat(100));
+      expect(huge.length).toBeLessThanOrEqual(200);
+      expect(huge.endsWith("-word")).toBe(true);
     });
   });
 
-  describe("ensureSessionAlias", () => {
-    it("creates a dir symlink named date-slug pointing at the sessionId directory", async () => {
-      const alias = await ensureSessionAlias(dir, "session-xyz", "Прочитан файл ради вопроса", "2026-08-06T09:00:00.000Z");
+  describe("nameSessionDir", () => {
+    const sessionsDir = () => path.join(dir, ".mekiri", "sessions");
 
-      expect(alias).toBe("2026-08-06-prochitan-fayl-radi-voprosa");
-      const linkPath = path.join(dir, ".mekiri", "sessions", alias);
-      const stat = await fs.lstat(linkPath);
-      expect(stat.isSymbolicLink()).toBe(true);
-      expect(await fs.readlink(linkPath)).toBe("session-xyz");
+    it("names the real session folder date-slug, with a .session-id marker and no symlink", async () => {
+      const name = await nameSessionDir(dir, "session-xyz", "Прочитан файл ради вопроса", "2026-08-06T09:00:00.000Z");
+
+      expect(name).toBe("2026-08-06-prochitan-fayl-radi-voprosa");
+      const folder = path.join(sessionsDir(), name);
+      expect((await fs.lstat(folder)).isDirectory()).toBe(true);
+      expect(await fs.readFile(path.join(folder, ".session-id"), "utf8")).toBe("session-xyz");
+      expect(await fs.readdir(sessionsDir())).toEqual([name]);
     });
 
-    it("is idempotent per session: second call returns the same alias without creating a second symlink", async () => {
-      const first = await ensureSessionAlias(dir, "session-xyz", "first header", "2026-08-06T09:00:00.000Z");
-      const second = await ensureSessionAlias(dir, "session-xyz", "unrelated later header", "2026-08-06T10:00:00.000Z");
+    it("is idempotent per session: a later header doesn't rename an already named folder", async () => {
+      const first = await nameSessionDir(dir, "session-xyz", "first header", "2026-08-06T09:00:00.000Z");
+      const second = await nameSessionDir(dir, "session-xyz", "unrelated later header", "2026-08-06T10:00:00.000Z");
 
       expect(second).toBe(first);
-      const entries = await fs.readdir(path.join(dir, ".mekiri", "sessions"));
-      expect(entries.filter((e) => e !== "session-xyz")).toHaveLength(1);
+      expect(await fs.readdir(sessionsDir())).toEqual([first]);
     });
 
     it("resolves a slug collision between two sessions with a numeric suffix", async () => {
-      const first = await ensureSessionAlias(dir, "session-a", "same header", "2026-08-06T09:00:00.000Z");
-      const second = await ensureSessionAlias(dir, "session-b", "same header", "2026-08-06T09:00:00.000Z");
+      const first = await nameSessionDir(dir, "session-a", "same header", "2026-08-06T09:00:00.000Z");
+      const second = await nameSessionDir(dir, "session-b", "same header", "2026-08-06T09:00:00.000Z");
 
       expect(first).not.toBe(second);
       expect(second).toBe(first + "-2");
+    });
+
+    it("renames a pending folder (prompts recorded before the first prune), keeping its content", async () => {
+      await recordPromptLines(dir, "session-p", [{ n: 1, line: "[user #1] 09:00" }]);
+      expect(await fs.readdir(sessionsDir())).toEqual(["pending-session-p"]);
+
+      const name = await nameSessionDir(dir, "session-p", "real header", "2026-08-06T09:00:00.000Z");
+
+      expect(await fs.readdir(sessionsDir())).toEqual([name]);
+      expect(await readCapsule(dir, "session-p")).toBe("[user #1] 09:00\n");
+    });
+
+    it("migrates the legacy layout: sessionId folder + alias symlink become one named folder", async () => {
+      const legacy = path.join(sessionsDir(), "session-old");
+      await fs.mkdir(legacy, { recursive: true });
+      await fs.writeFile(path.join(legacy, "capsule.md"), "old capsule\n", "utf8");
+      await fs.writeFile(path.join(legacy, ".alias"), "2026-08-01-old-work", "utf8");
+      await fs.symlink("session-old", path.join(sessionsDir(), "2026-08-01-old-work"), "dir");
+
+      expect(await readCapsule(dir, "session-old")).toBe("old capsule\n");
+
+      expect(await fs.readdir(sessionsDir())).toEqual(["2026-08-01-old-work"]);
+      const folder = path.join(sessionsDir(), "2026-08-01-old-work");
+      expect((await fs.lstat(folder)).isDirectory()).toBe(true);
+      expect(await fs.readdir(folder)).toEqual(expect.arrayContaining(["capsule.md", ".session-id"]));
+      expect(await fs.readdir(folder)).not.toContain(".alias");
+      expect(await sessionReportPath(dir, "session-old")).toBe(path.join(folder, "report.md"));
     });
   });
 

@@ -196,7 +196,7 @@ describe("contextReset", () => {
       expect(rule?.kind).toBe("reset");
       expect(rule?.lastPromptHash).toBeUndefined(); // p4 is inside the tail
 
-      const capsule = readFileSync(path.join(projectDir, ".mekiri", "sessions", "s", "capsule.md"), "utf8");
+      const capsule = await (await import("mekiri-core")).readCapsule(projectDir, "s");
       expect(capsule).toContain("[auto-reset] context reset at ~150k tokens; 3 unarchived messages dropped");
       expect(capsule).toContain(rule!.id);
       const entry = JSON.parse(readFileSync(path.join(projectDir, ".mekiri", "capsule-index.jsonl"), "utf8").trim());
@@ -216,7 +216,7 @@ describe("contextReset", () => {
       const earlier = { id: "e", kind: "reset" as const, keepFromHash: normalizedHash(messages[8]), instruction: "e", createdAt: "t" };
       const rule = await createResetRule({ sessionId: "s", dir: projectDir, messages, excluded: new Set(), resetRules: [earlier], settings: { ...settings, tailTurns: 2 }, estimate: 150_000 });
       expect(rule).not.toBeNull();
-      const capsule = readFileSync(path.join(projectDir, ".mekiri", "sessions", "s", "capsule.md"), "utf8");
+      const capsule = await (await import("mekiri-core")).readCapsule(projectDir, "s");
       // Tail = last 2 turns (index 16 on); this reset drops indices 8..15.
       expect(capsule).toContain("; 8 unarchived messages dropped");
     });
